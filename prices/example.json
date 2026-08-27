@@ -1,0 +1,15 @@
+{
+  "currency": "USD",
+  "as_of": "2026-08-26",
+  "source": "EXAMPLE ONLY: all rates are zero placeholders, replace with dated real prices before use",
+  "models": {
+    "claude-sonnet-5": {
+      "input_per_mtok": 0.0,
+      "cache_read_per_mtok": 0.0,
+      "cache_write_5m_per_mtok": 0.0,
+      "cache_write_1h_per_mtok": 0.0,
+      "output_per_mtok": 0.0,
+      "reasoning_per_mtok": null
+    }
+  }
+}
