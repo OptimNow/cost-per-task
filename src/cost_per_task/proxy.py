@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import http.client
 import itertools
+import sys
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +59,7 @@ class ProxyServer(ThreadingHTTPServer):
         self.writer = JsonlWriter(log_path)
         self.task_id = task_id
         self.attempt_id = attempt_id
+        self.captured_count = 0
         self._step_counter = itertools.count(1)
 
     def next_step_id(self) -> int:
@@ -73,8 +75,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         pass
 
     def _handle(self) -> None:
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length) if length else None
+        length_header = self.headers.get("Content-Length")
+        if length_header:
+            body = self.rfile.read(int(length_header))
+        elif (self.headers.get("Transfer-Encoding") or "").lower() == "chunked":
+            body = self._read_chunked_body()
+        else:
+            body = None
 
         headers = {}
         for name, value in self.headers.items():
@@ -110,6 +117,28 @@ class ProxyHandler(BaseHTTPRequestHandler):
     do_PUT = _handle
     do_DELETE = _handle
 
+    def _read_chunked_body(self) -> bytes:
+        # The forwarded request carries a plain Content-Length body, so the
+        # chunked framing is decoded here rather than passed through.
+        chunks = []
+        while True:
+            size_line = self.rfile.readline().strip()
+            size = int(size_line.split(b";")[0], 16)
+            if size == 0:
+                while self.rfile.readline().strip():
+                    pass
+                break
+            chunks.append(self.rfile.read(size))
+            self.rfile.readline()
+        return b"".join(chunks)
+
+    def _note_upstream_error(self, status: int) -> None:
+        print(
+            f"cpt: upstream returned HTTP {status} for {self.command} {self.path}; "
+            "not logged",
+            file=sys.stderr,
+        )
+
     def _send_response_headers(
         self,
         response: http.client.HTTPResponse,
@@ -133,7 +162,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         latency_ms = int((time.monotonic() - started) * 1000)
         self._send_response_headers(response, content_length=len(payload))
         self.wfile.write(payload)
-        if response.status < 400:
+        if response.status >= 400:
+            self._note_upstream_error(response.status)
+        else:
             usage = self.server.adapter.parse_json_body(payload)
             if usage:
                 self._log(usage, latency_ms)
@@ -155,8 +186,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 line, pending = pending.split(b"\n", 1)
                 collector.feed_line(line.rstrip(b"\r").decode("utf-8", "replace"))
         latency_ms = int((time.monotonic() - started) * 1000)
+        if response.status >= 400:
+            self._note_upstream_error(response.status)
+            return
         usage = collector.result()
-        if usage and response.status < 400:
+        if usage:
             self._log(usage, latency_ms)
 
     def _log(self, usage: ParsedUsage, latency_ms: int) -> None:
@@ -178,6 +212,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             latency_ms=latency_ms,
         )
         self.server.writer.append(record)
+        self.server.captured_count += 1
 
 
 def create_proxy(

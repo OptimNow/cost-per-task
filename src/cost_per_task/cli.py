@@ -120,6 +120,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
     finally:
         server.shutdown()
         server.server_close()
+        print(
+            f"cpt: captured {server.captured_count} steps "
+            f"(task {args.task_id}, attempt {attempt_id}) in {args.log}"
+        )
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
