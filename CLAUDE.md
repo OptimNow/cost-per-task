@@ -8,7 +8,9 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 - `src/cost_per_task/providers/`: per-provider usage extraction (JSON and SSE). Anthropic today; OpenAI in Phase 2; design allows Bedrock, Vertex, xAI.
 - `src/cost_per_task/schema.py`: StepRecord (OpenTelemetry GenAI aligned) + JSONL persistence.
 - `src/cost_per_task/pricing.py`: dated pricing tables, per-step and per-attempt cost.
+- `src/cost_per_task/report.py`: plain-text summary per attempt and per model.
 - `src/cost_per_task/cli.py`: `cpt serve`, `cpt run` (wraps an agent command, tags task/attempt ids), `cpt report`.
+- `prices/anthropic.json`: verified, dated Anthropic rates; `prices/example.json` is a zero-value template.
 
 ## Hard rules
 
