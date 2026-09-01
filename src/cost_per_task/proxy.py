@@ -160,14 +160,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _relay_buffered(self, response: http.client.HTTPResponse, started: float) -> None:
         payload = response.read()
         latency_ms = int((time.monotonic() - started) * 1000)
-        self._send_response_headers(response, content_length=len(payload))
-        self.wfile.write(payload)
+        # Log before relaying so the record is on disk by the time the
+        # client sees the response.
         if response.status >= 400:
             self._note_upstream_error(response.status)
         else:
             usage = self.server.adapter.parse_json_body(payload)
             if usage:
                 self._log(usage, latency_ms)
+        self._send_response_headers(response, content_length=len(payload))
+        self.wfile.write(payload)
 
     def _relay_stream(self, response: http.client.HTTPResponse, started: float) -> None:
         self._send_response_headers(response, close=True)

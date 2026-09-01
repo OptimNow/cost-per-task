@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.request
 
 from conftest import SSE_BODY
 
 from cost_per_task.proxy import create_proxy
 from cost_per_task.schema import read_jsonl
+
+
+def _read_records(log, count, timeout=5.0):
+    """The streaming path logs after the response is fully relayed, so a
+    just-finished client may be ahead of the writer; poll briefly."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log.exists():
+            records = read_jsonl(log)
+            if len(records) >= count:
+                return records
+        time.sleep(0.02)
+    raise AssertionError(f"expected {count} records in {log}")
 
 
 def _start_proxy(upstream: str, log_path):
@@ -36,8 +50,7 @@ def test_non_streaming_passthrough_and_log(fake_upstream, tmp_path):
         body = json.loads(_post(proxy_url, {"model": "claude-sonnet-5", "messages": []}))
         assert body["usage"]["input_tokens"] == 1200
 
-        records = read_jsonl(log)
-        assert len(records) == 1
+        records = _read_records(log, 1)
         record = records[0]
         assert record.task_id == "T1"
         assert record.attempt_id == "a1"
@@ -65,8 +78,7 @@ def test_streaming_passthrough_and_log(fake_upstream, tmp_path):
         body = _post(proxy_url, {"model": "claude-sonnet-5", "stream": True, "messages": []})
         assert body.decode() == SSE_BODY
 
-        records = read_jsonl(log)
-        assert len(records) == 1
+        records = _read_records(log, 1)
         record = records[0]
         assert record.model == "claude-sonnet-5-20250929"
         assert record.input_tokens == 800
@@ -89,6 +101,7 @@ def test_no_secrets_or_content_in_log(fake_upstream, tmp_path):
                 "messages": [{"role": "user", "content": "CLIENT-SENSITIVE-PROMPT"}],
             },
         )
+        _read_records(log, 1)
         raw = log.read_text(encoding="utf-8")
         assert "sk-test-DUMMY-KEY" not in raw
         assert "CLIENT-SENSITIVE-PROMPT" not in raw
@@ -105,7 +118,7 @@ def test_step_ids_increment(fake_upstream, tmp_path):
     try:
         _post(proxy_url, {"model": "claude-sonnet-5", "messages": []})
         _post(proxy_url, {"model": "claude-sonnet-5", "messages": []})
-        records = read_jsonl(log)
+        records = _read_records(log, 2)
         assert [r.step_id for r in records] == [1, 2]
     finally:
         server.shutdown()
