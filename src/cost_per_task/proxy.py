@@ -65,6 +65,14 @@ class ProxyServer(ThreadingHTTPServer):
     def next_step_id(self) -> int:
         return next(self._step_counter)
 
+    def handle_error(self, request, client_address) -> None:
+        # A client dropping its connection (common when an agent aborts or
+        # retries) is not worth a traceback on the console.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
