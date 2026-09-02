@@ -124,15 +124,46 @@ Prices live in a local JSON table, per model and token class, expressed per mill
 }
 ```
 
-`reasoning_per_mtok: null` means reasoning tokens are billed at the output rate, which is how both providers price today. `prices/anthropic.json` and `prices/openai.json` ship with verified, dated rates; `prices/example.json` is a zero-value template. Refresh them from your provider's price list or the [OptimNow AI Pricing Hub](https://github.com/OptimNow/ai-pricing-hub-mcp).
+`reasoning_per_mtok: null` means reasoning tokens are billed at the output rate, which is how both providers price today. `prices/anthropic.json` and `prices/openai.json` ship with verified, dated rates; `prices/example.json` is a zero-value template.
+
+To refresh a table from the [OptimNow AI Pricing Hub](https://github.com/OptimNow/ai-pricing-hub-mcp) (the `optimtoken.optimnow.io` catalogue, 250+ models, refreshed daily):
+
+```
+cpt prices refresh --provider anthropic            # diff against prices/anthropic.json
+cpt prices refresh --provider anthropic --write    # accept the changes
+```
+
+The default run only prints what would change (new, removed or repriced models, with the catalogue date), and warns about models the hub cannot price fully or whose cache-read price looks anomalous. Nothing is written without `--write`. The hub carries input, output and cached-input prices; cache-write rates are derived from the documented provider rules (Anthropic 1.25x and 2x of input; OpenAI none up to GPT-5.5, 1.25x from GPT-5.6) and named in the table's `source` field. Use `--map hub-id=api-id` when a hub model id does not normalise to the id the API reports.
 
 Known limitation: the table holds one rate per token class. Long-context price tiers (Anthropic above 200K input tokens, OpenAI above 272K) and batch discounts are not modelled; if your attempts cross those thresholds the report understates cost, and the disclosure checklist states which prices were applied.
 
+## Importing usage you already log
+
+If you already capture usage with Langfuse or LiteLLM, convert an export into a cpt log and get the same report without changing your stack:
+
+```
+cpt import langfuse observations.json --task-field sessionId --attempt-field traceId
+cpt import litellm spend_logs.jsonl --task-field metadata.task_id --attempt-field session_id
+```
+
+The values shown are the defaults. Exports may be CSV, a JSON array, a JSON object holding an array, or JSONL. Only usage metadata is read; prompts and completions in the export are never copied into the log. Both importers were built from the documented export schemas rather than a live export, so run with `--dry-run` first and adjust the field flags if rows are skipped. LiteLLM spend logs do not break out cached tokens, so imports from LiteLLM show a 0% cache hit rate and may overstate cost.
+
+## Machine-readable output and MCP
+
+`cpt report --json` and `cpt compare --json` emit the group summaries as JSON. The same numbers are available to AI assistants and to the OptimNow AI ROI calculator over MCP:
+
+```
+pip install "cost-per-task[mcp]"
+cpt mcp                                    # stdio server
+```
+
+Tools: `cpt_report`, `cpt_compare`, and `cpt_risk_denominator` (CPT_risk for one model, with sample size, intervals and price date, meant as the cost denominator in an ROI calculation). The `mcp` extra is the only optional dependency; the core stays dependency-free.
+
 ## Roadmap
 
-Implemented: Anthropic and OpenAI capture (plain and streaming), JSONL schema, dated pricing, labelling CLI with CSV import and leak flags, Wilson and bootstrap intervals, P90, capped retries, pass^k, CPT_solved, CPT_risk, two-model comparison with K*, disclosure checklist.
+Implemented: Anthropic and OpenAI capture (plain and streaming), JSONL schema, dated pricing with Pricing Hub refresh, labelling CLI with CSV import and leak flags, Wilson and bootstrap intervals, P90, capped retries, pass^k, CPT_solved, CPT_risk, two-model comparison with K*, disclosure checklist, Langfuse and LiteLLM importers, JSON output, MCP server.
 
-Phase 3: Langfuse and LiteLLM importers, AI Pricing Hub integration, MCP server exposing the report so an AI ROI calculator can use CPT_risk as its denominator, and further providers (Bedrock, Vertex, xAI).
+Next: validate the importers against real exports, further providers (Bedrock, Vertex, xAI), long-context price tiers, PyPI release.
 
 ## Licence
 

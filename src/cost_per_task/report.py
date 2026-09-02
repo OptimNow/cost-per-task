@@ -6,10 +6,50 @@ the numbers travel with the facts needed to interpret them.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from collections.abc import Iterable
 
 from .metrics import Attempt, GroupSummary, break_even_cleanup_cost
 from .pricing import PricingTable
+
+
+def summary_to_dict(summary: GroupSummary) -> dict:
+    data = dataclasses.asdict(summary)
+    for key in ("models_seen", "efforts_seen"):
+        data[key] = sorted(data[key])
+    for key in ("success_interval", "cpt_solved_interval"):
+        if data[key] is not None:
+            data[key] = list(data[key])
+    return data
+
+
+def table_to_dict(table: PricingTable) -> dict:
+    return {"currency": table.currency, "as_of": table.as_of, "source": table.source}
+
+
+def render_json(
+    attempts: list[Attempt],
+    summaries: list[GroupSummary],
+    table: PricingTable,
+    *,
+    harness: str | None = None,
+    comparison: tuple[GroupSummary, GroupSummary] | None = None,
+) -> str:
+    payload: dict = {
+        "prices": table_to_dict(table),
+        "harness": harness,
+        "attempts": len(attempts),
+        "groups": [summary_to_dict(s) for s in summaries],
+    }
+    if comparison is not None:
+        a, b = comparison
+        payload["comparison"] = {
+            "model_a": a.model,
+            "model_b": b.model,
+            "break_even_cleanup_cost": break_even_cleanup_cost(a, b),
+        }
+    return json.dumps(payload, indent=2)
 
 
 def _money(value: float | None, currency: str) -> str:

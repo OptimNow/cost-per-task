@@ -1,0 +1,13 @@
+{
+  "models": [
+    {"provider": "Anthropic", "model": "Claude Haiku 4.5", "openRouterId": "anthropic/claude-haiku-4.5", "inputPricePer1M": 1, "outputPricePer1M": 5, "cachedInputPricePer1M": 0.1},
+    {"provider": "Anthropic", "model": "Claude Sonnet 5", "openRouterId": "anthropic/claude-sonnet-5", "inputPricePer1M": 2, "outputPricePer1M": 10, "cachedInputPricePer1M": 0.2},
+    {"provider": "Anthropic", "model": "Claude Fable 5.1", "openRouterId": "anthropic/claude-fable-5.1", "inputPricePer1M": 10, "outputPricePer1M": 50, "cachedInputPricePer1M": 0.25},
+    {"provider": "Anthropic", "model": "Claude Mystery", "openRouterId": "anthropic/claude-mystery", "inputPricePer1M": 3, "outputPricePer1M": 15},
+    {"provider": "OpenAI", "model": "GPT-5.5", "openRouterId": "openai/gpt-5.5", "inputPricePer1M": 5, "outputPricePer1M": 30, "cachedInputPricePer1M": 0.5},
+    {"provider": "OpenAI", "model": "GPT-5.6 Sol", "openRouterId": "openai/gpt-5.6-sol", "inputPricePer1M": 4, "outputPricePer1M": 20, "cachedInputPricePer1M": 0.4},
+    {"provider": "OpenAI", "model": "o3", "openRouterId": "openai/o3", "inputPricePer1M": 2, "outputPricePer1M": 8, "cachedInputPricePer1M": 0.5},
+    {"provider": "xAI", "model": "Grok 4.6", "openRouterId": "x-ai/grok-4.6", "inputPricePer1M": 2, "outputPricePer1M": 6, "cachedInputPricePer1M": 0.5}
+  ],
+  "meta": {"schemaVersion": "2.2", "total": 8, "source": "openrouter", "timestamp": "2026-09-02T07:18:36.813Z"}
+}

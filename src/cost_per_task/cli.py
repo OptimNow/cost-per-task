@@ -6,24 +6,32 @@ Commands:
   cpt label    mark an attempt pass or fail (and optionally leaked), or import a CSV
   cpt report   cost per attempt and per solved task, per model and task type
   cpt compare  two-model comparison with the break-even cleanup cost K*
+  cpt import   convert a Langfuse or LiteLLM usage export into a cpt log
+  cpt prices   refresh a pricing table from the OptimNow AI Pricing Hub
+  cpt mcp      serve the report over MCP (needs the [mcp] extra)
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
+from .analysis import load_analysis, pick_model
+from .importers import import_langfuse, import_litellm
+from .importers.common import ImportError_
 from .labels import Label, LabelError, append_label, import_csv, load_labels
-from .metrics import build_attempts, summarise
-from .pricing import PricingError, PricingTable
+from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
+from .pricing import PricingError
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
-from .report import render_comparison, render_report
-from .schema import read_jsonl
+from .report import render_comparison, render_json, render_report
+from .schema import JsonlWriter, read_jsonl
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
@@ -61,6 +69,7 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, help="bootstrap seed for reproducible intervals")
     parser.add_argument("--harness", help="harness name and version for the disclosure checklist")
     parser.add_argument("--task-type", help="only include attempts of this task type")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -104,6 +113,30 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("model_b", help="the reliable model (B)")
     _add_analysis_options(compare)
 
+    imp = sub.add_parser("import", help="convert a usage export into cpt step records")
+    imp.add_argument("source", choices=("langfuse", "litellm"))
+    imp.add_argument("file", help="export file: .csv, .json or .jsonl")
+    imp.add_argument("--log", default=DEFAULT_LOG, help="cpt log to append to")
+    imp.add_argument("--task-field", help="dotted field holding the task id")
+    imp.add_argument("--attempt-field", help="dotted field holding the attempt id")
+    imp.add_argument("--task-type")
+    imp.add_argument("--dry-run", action="store_true", help="show what would be imported")
+
+    prices = sub.add_parser("prices", help="pricing table maintenance")
+    prices_sub = prices.add_subparsers(dest="prices_command", required=True)
+    refresh = prices_sub.add_parser("refresh", help="diff or rewrite a table from the Pricing Hub")
+    refresh.add_argument("--provider", required=True, choices=sorted(PROVIDERS))
+    refresh.add_argument("--out", help="table path (default prices/<provider>.json)")
+    refresh.add_argument("--url", default=HUB_URL)
+    refresh.add_argument("--from-file", help="use a saved hub JSON instead of fetching")
+    refresh.add_argument(
+        "--map", action="append", default=[], metavar="HUB_ID=API_ID",
+        help="override the model id mapping, e.g. anthropic/claude-haiku-4.5=claude-haiku-4-5",
+    )
+    refresh.add_argument("--write", action="store_true", help="write the table (default: diff only)")
+
+    sub.add_parser("mcp", help="serve the report over MCP on stdio")
+
     args = parser.parse_args(argv)
     handlers = {
         "serve": _cmd_serve,
@@ -111,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         "label": _cmd_label,
         "report": _cmd_report,
         "compare": _cmd_compare,
+        "import": _cmd_import,
+        "prices": _cmd_prices,
+        "mcp": _cmd_mcp,
     }
     return handlers[args.command](args)
 
@@ -230,61 +266,129 @@ def _cmd_label(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_analysis(args: argparse.Namespace, *, by_task_type: bool):
+def _analysis(args: argparse.Namespace, *, by_task_type: bool):
     try:
-        table = PricingTable.load(args.prices)
+        return load_analysis(
+            log=args.log,
+            labels=args.labels,
+            prices=args.prices,
+            by_task_type=by_task_type,
+            task_type=args.task_type,
+            k=args.k,
+            retry_cap=args.retry_cap,
+            cleanup_cost=args.cleanup_cost,
+            leak_rate=args.leak_rate,
+            resamples=args.resamples,
+            seed=args.seed,
+        )
     except (OSError, PricingError) as exc:
-        print(f"cpt: cannot load prices: {exc}", file=sys.stderr)
+        print(f"cpt: {exc}", file=sys.stderr)
         return None
-    try:
-        records = read_jsonl(args.log)
-    except OSError as exc:
-        print(f"cpt: cannot read log: {exc}", file=sys.stderr)
-        return None
-    labels = load_labels(args.labels)
-    attempts = build_attempts(records, table, labels)
-    if args.task_type:
-        attempts = [a for a in attempts if a.task_type == args.task_type]
-    summaries = summarise(
-        attempts,
-        by_task_type=by_task_type,
-        k=args.k,
-        retry_cap=args.retry_cap,
-        cleanup_cost=args.cleanup_cost,
-        leak_rate=args.leak_rate,
-        resamples=args.resamples,
-        seed=args.seed,
-    )
-    return table, attempts, summaries
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    loaded = _load_analysis(args, by_task_type=not args.by_model_only)
-    if loaded is None:
+    analysis = _analysis(args, by_task_type=not args.by_model_only)
+    if analysis is None:
         return 1
-    table, attempts, summaries = loaded
-    print(render_report(attempts, summaries, table, harness=args.harness))
+    if args.json:
+        print(render_json(analysis.attempts, analysis.summaries, analysis.table, harness=args.harness))
+    else:
+        print(render_report(analysis.attempts, analysis.summaries, analysis.table, harness=args.harness))
     return 0
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
-    loaded = _load_analysis(args, by_task_type=False)
-    if loaded is None:
+    analysis = _analysis(args, by_task_type=False)
+    if analysis is None:
         return 1
-    table, _attempts, summaries = loaded
-    picked = []
-    for wanted in (args.model_a, args.model_b):
-        matches = [s for s in summaries if s.model == wanted or s.model.startswith(wanted)]
-        if len(matches) != 1:
-            names = ", ".join(s.model for s in summaries) or "none"
-            print(
-                f"cpt compare: '{wanted}' matches {len(matches)} models; available: {names}",
-                file=sys.stderr,
+    try:
+        a = pick_model(analysis.summaries, args.model_a)
+        b = pick_model(analysis.summaries, args.model_b)
+    except LookupError as exc:
+        print(f"cpt compare: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(
+            render_json(
+                analysis.attempts, [a, b], analysis.table, harness=args.harness, comparison=(a, b)
             )
-            return 1
-        picked.append(matches[0])
-    print(render_comparison(picked[0], picked[1], table, harness=args.harness))
+        )
+    else:
+        print(render_comparison(a, b, analysis.table, harness=args.harness))
     return 0
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    importer = import_langfuse if args.source == "langfuse" else import_litellm
+    options = {"task_type": args.task_type}
+    if args.task_field:
+        options["task_field"] = args.task_field
+    if args.attempt_field:
+        options["attempt_field"] = args.attempt_field
+    try:
+        result = importer(args.file, **options)
+    except (OSError, ValueError, ImportError_) as exc:
+        print(f"cpt import: {exc}", file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f"cpt import: warning: {warning}", file=sys.stderr)
+    attempts = {(r.task_id, r.attempt_id) for r in result.records}
+    tasks = {r.task_id for r in result.records}
+    if args.dry_run:
+        print(
+            f"cpt import: would append {len(result.records)} steps "
+            f"({len(attempts)} attempts over {len(tasks)} tasks) to {args.log}"
+        )
+        return 0
+    writer = JsonlWriter(args.log)
+    for record in result.records:
+        writer.append(record)
+    print(
+        f"cpt import: appended {len(result.records)} steps "
+        f"({len(attempts)} attempts over {len(tasks)} tasks) to {args.log}"
+    )
+    return 0
+
+
+def _cmd_prices(args: argparse.Namespace) -> int:
+    overrides = {}
+    for mapping in args.map:
+        if "=" not in mapping:
+            print(f"cpt prices: --map expects HUB_ID=API_ID, got '{mapping}'", file=sys.stderr)
+            return 2
+        hub_id, api_id = mapping.split("=", 1)
+        overrides[hub_id.strip()] = api_id.strip()
+    try:
+        hub = load_hub(args.from_file) if args.from_file else fetch_hub(args.url)
+    except (OSError, ValueError) as exc:
+        print(f"cpt prices: cannot load the hub catalogue: {exc}", file=sys.stderr)
+        return 1
+    table, warnings = build_table(hub, args.provider, overrides)
+    out = Path(args.out or f"prices/{args.provider}.json")
+    existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
+
+    for warning in warnings:
+        print(f"cpt prices: warning: {warning}", file=sys.stderr)
+    changes = diff_tables(existing, table)
+    print(f"hub catalogue {table['as_of']}: {len(table['models'])} {args.provider} models priced")
+    if existing is None:
+        print(f"{out} does not exist yet; all models are new")
+    if changes:
+        print("\n".join(changes))
+    else:
+        print(f"no changes against {out}")
+    if args.write:
+        write_table(table, out)
+        print(f"wrote {out}")
+    elif changes or existing is None:
+        print("dry run; pass --write to update the table")
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import main as mcp_main
+
+    return mcp_main()
 
 
 if __name__ == "__main__":

@@ -11,16 +11,21 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 - `src/cost_per_task/labels.py`: pass/fail/leak labels in a separate append-only `cpt-labels.jsonl` (latest wins), CSV import.
 - `src/cost_per_task/stats.py`: Wilson interval, percentile, task-cluster bootstrap, p_N, pass^k. Standard library only.
 - `src/cost_per_task/metrics.py`: records to Attempt (primary model = largest cost share) to GroupSummary per model and task type; CPT_solved, CPT_risk, K*.
-- `src/cost_per_task/report.py`: text report, two-model comparison, disclosure checklist.
-- `src/cost_per_task/cli.py`: `cpt serve`, `cpt run`, `cpt label`, `cpt report`, `cpt compare`.
-- `prices/anthropic.json`, `prices/openai.json`: verified, dated rates; `prices/example.json` is a zero-value template.
+- `src/cost_per_task/report.py`: text report, two-model comparison, disclosure checklist, JSON output.
+- `src/cost_per_task/analysis.py`: files-to-summaries loader shared by the CLI and the MCP server.
+- `src/cost_per_task/importers/`: Langfuse and LiteLLM export importers (`common.py` reads CSV/JSON/JSONL and groups rows into attempts). Built from documented schemas, not validated against live exports yet.
+- `src/cost_per_task/prices_hub.py`: `cpt prices refresh`; fetches `optimtoken.optimnow.io/api/llm-models` with urllib, maps ids per provider (Anthropic dots to hyphens), derives cache-write rates from documented rules, diffs by default, writes only with `--write`, flags anomalous cache-read ratios.
+- `src/cost_per_task/mcp_server.py`: MCP tools (`cpt_report`, `cpt_compare`, `cpt_risk_denominator`); the SDK is the optional `[mcp]` extra (mcp 2.x `MCPServer`, 1.x `FastMCP` fallback) and is imported lazily.
+- `src/cost_per_task/cli.py`: `cpt serve`, `run`, `label`, `report`, `compare`, `import`, `prices refresh`, `mcp`.
+- `prices/anthropic.json`, `prices/openai.json`: verified, dated rates; `prices/example.json` is a zero-value template. `tests/fixtures/hub_sample.json` is a recorded hub sample.
 
 ## Hard rules
 
 - **Never log secrets or content.** The proxy must never write API keys, headers, prompts or completions to the log. Only token counts, model, provider, ids, latency, tool names. Tests enforce this (`test_no_secrets_or_content_in_log`); keep them passing.
 - **Token counts come from the provider API response, never a local tokenizer.**
 - **No invented prices.** Pricing tables carry `as_of` dates and a source; an undated table is rejected at load. Do not add or update a price without a verifiable source.
-- **Zero runtime dependencies.** Standard library only; pytest is the sole dev dependency. Any new dependency needs explicit justification and agreement.
+- **Zero runtime dependencies in the core.** Standard library only; pytest is the sole dev dependency. The only optional extra is `[mcp]` for `cpt mcp`. Any new dependency needs explicit justification and agreement.
+- **Hub prices never land unseen.** `cpt prices refresh` diffs by default; `--write` is a deliberate step after reading the diff and warnings.
 
 ## Conventions
 
@@ -34,5 +39,5 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 
 ## Roadmap
 
-Phase 1 and 2 shipped (0.2.0): capture for both providers, labelling, statistics, CPT_solved / CPT_risk / K*, disclosure checklist.
-Phase 3: Langfuse and LiteLLM importers, AI Pricing Hub integration (github.com/OptimNow/ai-pricing-hub-mcp), MCP server exposing the report, further providers.
+Phases 1 to 3 shipped (0.3.0): capture for both providers, labelling, statistics, CPT_solved / CPT_risk / K*, disclosure checklist, importers, Pricing Hub refresh, JSON output, MCP server.
+Next: validate importers on real exports, further providers (Bedrock, Vertex, xAI), long-context price tiers, PyPI release and public repo (apply the OptimNow public-repo hardening standard first).
