@@ -1,129 +1,220 @@
 # cost-per-task
 
-Measure the real cost per completed task of LLM agents.
+> Measure what an AI agent really costs per task it completes correctly, not per
+> million tokens. A small, dependency-free Python tool that sits between your agent
+> and the model API, records the tokens every call actually used, prices them with
+> dated prices, and reports cost per attempt, cost per solved task and risk-adjusted
+> cost per task, with the statistics to trust the numbers.
+> Built by [OptimNow](https://optimnow.io), implementing the measurement framework
+> published by [DoiT](https://www.doit.com/research/economics-of-claude-openai-and-grok).
 
-`cost-per-task` captures token usage from every API call an agent makes, groups calls into steps, attempts and tasks, prices them from a dated pricing table, and computes cost per attempt, cost per solved task, and risk-adjusted cost per task. Output is a JSONL log plus a CLI report that doubles as a disclosure checklist.
+[![CI](https://github.com/OptimNow/cost-per-task/actions/workflows/ci.yml/badge.svg)](https://github.com/OptimNow/cost-per-task/actions/workflows/ci.yml)
+[![GitHub Stars](https://img.shields.io/github/stars/OptimNow/cost-per-task?style=flat)](https://github.com/OptimNow/cost-per-task/stargazers)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![No runtime dependencies](https://img.shields.io/badge/dependencies-none-2C2C2C)](#design-principles)
+[![Methodology: DoiT Cost Per Task](https://img.shields.io/badge/methodology-DoiT%20Cost%20Per%20Task-ACE849?labelColor=2C2C2C)](https://www.doit.com/research/economics-of-claude-openai-and-grok)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## Why
+---
 
-Per-token pricing is the wrong unit for agentic workloads. Agentic tasks consume orders of magnitude more tokens than single completions, with heavy run-to-run variance, and a cheaper model that fails more often can cost more per solved task than an expensive one. The right unit is the completed, correct task.
+## Why cost per task
 
-This tool implements the measurement framework published by DoiT: [Cost Per Task, Not Cost Per Token: A Measurement Framework for the Real Economics of Claude, OpenAI and Grok](https://www.doit.com/research/economics-of-claude-openai-and-grok) (13 August 2026). Capturing usage per call is a solved problem (LiteLLM, Helicone, Langfuse, OpenTelemetry GenAI conventions). The missing half is attempts, outcomes, success division and the risk term. That is what this tool adds.
+Model vendors price tokens. Businesses buy outcomes: a merged pull request, a resolved
+ticket, a correctly filed invoice. For an agent that runs dozens of model calls, retries
+when it fails, and sometimes returns a wrong answer that looks right, the two are far
+apart:
 
-## How it works
+- A cheaper model that fails more often costs **more** per solved task, because you pay
+  for the failed attempts too.
+- Agent runs are heavy-tailed: the same task can cost several times more on a bad run,
+  so the average alone understates what you will actually budget.
+- A wrong answer that gets accepted is not free. Someone cleans it up later, and that
+  cleanup cost belongs in the price of the task.
 
-The primary capture mode is a local reverse proxy. You point your agent at it with an environment variable; no change to the agent's code is needed, so it works with Claude Code, LangGraph, or any agent you did not write.
+The formulas that turn token counts into those business numbers are set out in DoiT's
+paper *Cost Per Task, Not Cost Per Token: A Measurement Framework for the Real Economics
+of Claude, OpenAI and Grok* (13 August 2026). Capturing usage per call was already a
+solved problem (LiteLLM, Helicone, Langfuse, OpenTelemetry). The missing half was
+attempts, outcomes, dividing by the success rate, and the risk term. This tool adds
+that half, and it works with any model.
 
-```
-agent  ->  cpt proxy (localhost)  ->  api.anthropic.com / api.openai.com
-               |
-               v
-        cpt-log.jsonl  (usage metadata only)
-```
+**Who this is for:** FinOps and finance teams who need a defensible cost per unit of AI
+work, engineers comparing two models on a real workload, and anyone publishing agent
+cost figures who wants them to carry the disclosures needed to be believed. If you can
+run a command in a terminal, you can use this.
 
-The proxy forwards each request, returns the response unchanged (streaming included), and records only the usage metadata: token counts by class, model, provider, task and attempt ids, tool call names, latency. One port serves both providers; requests are routed by path.
+---
 
-The proxy never logs API keys, headers, prompts or completions. Prompts may contain client data; they do not belong in a metrics log.
+## Quick start
 
-The one deliberate change the proxy makes to a request: streaming OpenAI Chat Completions calls get `stream_options.include_usage` set, because without it OpenAI never reports usage on a stream. Disable with `--no-inject-usage`.
-
-### OpenRouter and other OpenAI-compatible gateways
-
-Any gateway that speaks the OpenAI API can be the `openai` upstream, path prefix included:
-
-```
-cpt run --task-id issue-142 --openai-upstream https://openrouter.ai/api -- python my_agent.py
-cpt report --prices prices/anthropic.json --prices prices/openai.json
-```
-
-Three things happen for OpenRouter specifically. Requests get `usage: {include: true}` so OpenRouter returns native token counts and `usage.cost`, the amount it actually charged, which the log keeps as `reported_cost`; the report then prints a reconciliation line comparing it with the table price for the same attempts, so a gateway markup or a stale table shows up as a percentage rather than staying hidden. Model ids such as `anthropic/claude-haiku-4.5` are matched to the pricing table without the vendor prefix (and with dots as hyphens), and several vendor tables can be merged with repeated `--prices`. The `provider` field records the gateway host (`openrouter.ai`) rather than `openai`, so the log says who billed the call.
-
-Only one OpenAI-compatible upstream per proxy instance. Confidence on OpenRouter's usage-accounting behaviour is medium-high (documented, not yet tested against the live service).
-
-## Install
+Three steps: run the agent through the proxy, say whether it succeeded, read the report.
 
 ```
 pip install cost-per-task
 ```
 
-Python 3.11 or later. No runtime dependencies.
-
-## Quick start
-
-Run an agent command through the proxy, tagged with a task id and optional task type:
+**1. Run.** Wrap the command that starts your agent. Nothing in the agent changes; it
+just talks to `localhost` instead of the vendor.
 
 ```
 cpt run --task-id issue-142 --task-type coding -- claude -p "fix the failing test in api/tests"
 ```
 
-Each `cpt run` invocation is one attempt. Run it again for a second attempt at the same task. The child process sees `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` pointing at the proxy; it must authenticate with an API key (for Claude Code, set `ANTHROPIC_API_KEY`).
+Every `cpt run` is one attempt at that task. Run it again for a second attempt.
 
-Label the outcome once you have checked the result:
+**2. Label.** Once you have checked the result, record the outcome. A *leak* is an
+answer you accepted at the time and later found to be wrong.
 
 ```
-cpt label pass --task issue-142            # latest attempt of that task
+cpt label pass --task issue-142
 cpt label fail --task issue-142 --attempt a20260901T212657Z
-cpt label pass --leak --task issue-142     # accepted at the time, later found wrong
-cpt label --import labels.csv              # columns: task_id, attempt_id, outcome, leaked, note
+cpt label pass --leak --task issue-142
 ```
 
-Then report:
+**3. Report.** Price the log and, if you can put a figure on cleaning up a wrong
+answer, pass it as the cleanup cost.
 
 ```
 cpt report --prices prices/anthropic.json --cleanup-cost 25 --harness "Claude Code 2.1"
+```
+
+### What a report looks like
+
+This is a real run: a Claude Code session answering a trivial prompt on Haiku, twice.
+
+```
+group: claude-haiku-4-5-20251001
+  attempts 2 over 1 tasks; labelled 2 (pass 2, fail 0, leaked 1)
+  attempt cost C: mean 0.0549 USD, P90 0.0557 USD, total 0.1099 USD
+  success rate p: 1.000 (Wilson 95%: 0.342 to 1.000)
+  CPT_solved = E[C] / p: 0.0549 USD (bootstrap 95%: 0.0549 to 0.0549, 10000 resamples)
+  cost per task attempted (failures included): 0.1099 USD
+  capped retries N=2: p_N 1.000
+  pass^2: 1.000
+  leak rate L: 0.500
+  CPT_risk = CPT_solved + L x K: 12.5549 USD (K = 25.0000 USD)
+  cache hit rate: 0.0%
+
+disclosure checklist
+  model versions: claude-haiku-4-5-20251001
+  prices: as of 2026-08-27 in USD; source: OptimNow AI Pricing Hub, cross-checked against the vendor price list
+  harness: Claude Code 2.1, -p mode
+  ...
+```
+
+Two things this run shows that a per-token view hides. The question and answer were 68
+tokens; 99% of the 5.5 cents went on Claude Code writing its 43,000-token system context
+into the prompt cache. And with one of two answers flagged as a leak and a $25 cleanup
+cost, the risk-adjusted cost per task is $12.55, two hundred times the raw cost. The
+risk term is the whole point of the method.
+
+---
+
+## What you get
+
+Per model and per task type, the paper's estimators with plain-language meaning:
+
+| Reported | Formula | What it tells you |
+|---|---|---|
+| Attempt cost, mean and P90 | C_attempt = sum over calls of priced tokens (input, cache read, cache write, reasoning, output) | What one try costs, and what a bad try costs. Agent costs are heavy-tailed, so P90 is your budgeting number |
+| Success rate p, with a Wilson 95% interval | passes / labelled attempts | How often a try works, and how sure you can be given how few tries you measured |
+| Cost per solved task, with a bootstrap 95% interval | CPT_solved = E[C_attempt] / p | What a *correct* result costs once failed tries are paid for. The headline number |
+| Cost per task attempted | total cost / distinct tasks | Same thing seen from the budget side: failures included, whether or not the task ever got solved |
+| Capped-retry success p_N | 1 - (1 - p)^N | Chance of success within N tries |
+| Consistency pass^k | share of tasks solved on every one of their first k tries | Whether the agent is reliable or merely lucky; single-try success rates hide collapse here |
+| Leak rate L | leaked passes / passes | How often an accepted answer was actually wrong |
+| Risk-adjusted cost per task | CPT_risk = CPT_solved + L x K | The cost once cleanup of leaked failures (K per leak) is counted |
+| Break-even cleanup cost K* | (CPT_B - CPT_A) / (L_A - L_B) | For two models: below K* the cheaper, leakier one wins; above it the reliable one does |
+
+Every report ends with the paper's **disclosure checklist**: model versions, prices with
+dates and source, harness, cache hit rate, effort settings, sample size and k, which
+intervals were used, leak rate, the cleanup cost assumed, and K* for comparisons. A cost
+figure without these is an opinion; with them it is a measurement someone else can check.
+
+Compare two models directly:
+
+```
 cpt compare claude-haiku-4-5 claude-sonnet-5 --prices prices/anthropic.json --cleanup-cost 25
 ```
 
-You can also run the proxy standalone with `cpt serve --port 4000 --task-id issue-142` and point any process at it.
+---
 
-## What the report contains
+## How it works
 
-Per model and task type (the paper's Section 4 estimators):
+```
+your agent  ->  cpt proxy on localhost  ->  api.anthropic.com / api.openai.com / a gateway
+                        |
+                        v
+                 cpt-log.jsonl   one line per call: token counts, model, ids, latency
+                 cpt-labels.jsonl   pass / fail / leak per attempt
+```
 
-| Quantity | Definition |
-| --- | --- |
-| C_attempt | sum over steps of priced tokens: input, cache read, cache write, reasoning, output |
-| mean and P90 of C_attempt | agentic cost is heavy-tailed; the mean alone understates budget risk |
-| success rate p | labelled passes over labelled attempts, with a Wilson score interval (z = 1.96) |
-| CPT_solved | E[C_attempt] / p, with a percentile bootstrap interval from 10,000 task resamples |
-| cost per task attempted | total cost / distinct tasks, failures included |
-| p_N | 1 - (1 - p)^N, success within N capped retries |
-| pass^k | share of tasks solved on every one of their first k attempts |
-| leak rate L | leaked passes / passes (accepted outputs that were actually wrong) |
-| CPT_risk | CPT_solved + L x K, where K is the cleanup cost per leaked failure (`--cleanup-cost`) |
-| K* | (CPT_B - CPT_A) / (L_A - L_B), the cleanup cost at which two models break even (`cpt compare`) |
+**The proxy.** `cpt run` starts a small web server on your machine and points the
+agent at it through `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`, the standard variables
+every SDK honours. Each request is forwarded to the real API and the response is handed
+back unchanged, streaming included. On the way through, the proxy copies the vendor's
+own token counts out of the response. Token counts are never estimated with a local
+tokenizer; they are what the vendor billed.
 
-Every report ends with the disclosure checklist: model versions, prices with dates and source, harness, cache hit rate, effort settings, n and k, the intervals used, leak rate, K assumed, and K* for comparisons.
+**What is never logged.** API keys, headers, prompts and completions. Prompts often
+contain client data and have no place in a metrics file. Only token counts, model,
+provider, task and attempt ids, tool names and latency are written. A test asserts this
+on every commit.
 
-An attempt that mixes models (Claude Code uses a small model for side calls) is attributed to the model carrying the largest share of its cost.
+**Labels live apart from the log.** The usage log is append-only and never rewritten;
+outcomes go to `cpt-labels.jsonl` and can be corrected at any time.
 
-## What gets logged
+**Attempts that mix models** (an agent using a small model for side calls) are
+attributed to the model carrying the largest share of the cost.
 
-One JSONL line per API call, aligned with the OpenTelemetry GenAI semantic conventions:
+---
 
-| Field | Meaning |
-| --- | --- |
-| `task_id`, `attempt_id`, `step_id` | grouping keys: which task, which try, which call |
-| `task_type` | free-text category from `--task-type`, used to group the report |
-| `model`, `provider` | from the API response (`gen_ai.request.model`, `gen_ai.provider.name`) |
-| `input_tokens` | fresh, uncached input |
-| `cache_read_tokens`, `cache_write_tokens` | prompt cache traffic; Anthropic 1h-TTL writes broken out in `cache_write_1h_tokens`; OpenAI reports writes only from GPT-5.6 |
-| `reasoning_tokens` | separated out for OpenAI; null for Anthropic, which bills reasoning inside output |
-| `output_tokens` | visible output (reasoning excluded where the provider reports it separately) |
-| `tool_call_count`, `tool_names` | tool use in the response |
-| `latency_ms`, `effort`, `outcome_label`, `timestamp` | timing, effort setting, pass/fail/pending |
+## What it works with
 
-Token counts always come from the provider API response, never from a local tokenizer. Labels live in a separate `cpt-labels.jsonl`, so the usage log stays append-only.
+| Source | How | Notes |
+|---|---|---|
+| **Anthropic** | proxy, any Claude model, plain or streaming | cache reads and 5-minute / 1-hour cache writes priced separately; reasoning is billed inside output |
+| **OpenAI** | proxy, any model, Chat Completions and Responses APIs, plain or streaming | reasoning tokens split out of output; the proxy adds `stream_options.include_usage` so streams report usage |
+| **OpenRouter** and other OpenAI-compatible gateways | proxy, `--openai-upstream https://openrouter.ai/api` | usage accounting requested so OpenRouter returns native counts and the cost it charged; the report reconciles that against list price. Covers Gemini, Grok, Mistral, DeepSeek and anything else the gateway routes |
+| **Langfuse** exports | `cpt import langfuse observations.json` | for teams already logging usage; session as task, trace as attempt by default |
+| **LiteLLM** spend logs | `cpt import litellm spend_logs.jsonl` | spend logs carry no cache breakdown, so imports show 0% cache hits |
 
-## Pricing
+Native adapters for Bedrock, Vertex AI and xAI are on the roadmap; each is a small file,
+because the only thing that differs between vendors is the shape of the usage block.
+The statistics, labels, report and comparison are model-agnostic already.
 
-Prices live in a local JSON table, per model and token class, expressed per million tokens. A table without an `as_of` date is rejected: the framework's disclosure checklist requires prices with dates. Model ids in responses often carry a date suffix (`claude-haiku-4-5-20251001`); the longest matching table key wins.
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `cpt run --task-id T [--task-type X] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id |
+| `cpt serve --port 4000 --task-id T` | run the proxy standalone and point any process at it |
+| `cpt label pass\|fail [--task T] [--attempt A] [--leak]` | label the latest (or a named) attempt; `--import labels.csv` for batch labelling |
+| `cpt report --prices P [--cleanup-cost K] [--harness H] [--json]` | the report above, per model and task type; repeat `--prices` to merge vendor tables |
+| `cpt compare A B --prices P [--cleanup-cost K] [--json]` | two-model comparison with K* |
+| `cpt import langfuse\|litellm FILE [--task-field F] [--attempt-field F]` | convert an export into cpt records |
+| `cpt prices refresh --provider anthropic\|openai [--write]` | diff a pricing table against the OptimNow AI Pricing Hub; write only when asked |
+| `cpt mcp` | serve the report to AI assistants over MCP (optional extra) |
+
+Useful options on `report` and `compare`: `--leak-rate` to override the measured L,
+`--retry-cap N`, `--k`, `--seed` for reproducible bootstrap intervals, `--task-type` to
+filter, `--by-model-only` to ignore task types.
+
+---
+
+## Prices
+
+Prices live in local JSON tables, one per vendor, per model and token class, per million
+tokens. Every table carries an `as_of` date and a `source`; a table without a date is
+rejected, because the disclosure checklist requires prices with dates.
 
 ```json
 {
   "currency": "USD",
   "as_of": "2026-08-27",
-  "source": "where these numbers came from",
+  "source": "OptimNow AI Pricing Hub, cross-checked against platform.claude.com on 2026-08-27",
   "models": {
     "claude-sonnet-5": {
       "input_per_mtok": 2.0,
@@ -137,47 +228,161 @@ Prices live in a local JSON table, per model and token class, expressed per mill
 }
 ```
 
-`reasoning_per_mtok: null` means reasoning tokens are billed at the output rate, which is how both providers price today. `prices/anthropic.json` and `prices/openai.json` ship with verified, dated rates; `prices/example.json` is a zero-value template.
+`prices/anthropic.json` and `prices/openai.json` ship with verified, dated rates.
+`reasoning_per_mtok: null` means reasoning is billed at the output rate, which is how
+both vendors price today. Model ids reported with a date suffix
+(`claude-haiku-4-5-20251001`) or a gateway prefix (`anthropic/claude-haiku-4.5`) match
+the table automatically.
 
-To refresh a table from the [OptimNow AI Pricing Hub](https://github.com/OptimNow/ai-pricing-hub-mcp) (the `optimtoken.optimnow.io` catalogue, 250+ models, refreshed daily):
-
-```
-cpt prices refresh --provider anthropic            # diff against prices/anthropic.json
-cpt prices refresh --provider anthropic --write    # accept the changes
-```
-
-The default run only prints what would change (new, removed or repriced models, with the catalogue date), and warns about models the hub cannot price fully or whose cache-read price looks anomalous. Nothing is written without `--write`. The hub carries input, output and cached-input prices; cache-write rates are derived from the documented provider rules (Anthropic 1.25x and 2x of input; OpenAI none up to GPT-5.5, 1.25x from GPT-5.6) and named in the table's `source` field. Use `--map hub-id=api-id` when a hub model id does not normalise to the id the API reports.
-
-Known limitation: the table holds one rate per token class. Long-context price tiers (Anthropic above 200K input tokens, OpenAI above 272K) and batch discounts are not modelled; if your attempts cross those thresholds the report understates cost, and the disclosure checklist states which prices were applied.
-
-## Importing usage you already log
-
-If you already capture usage with Langfuse or LiteLLM, convert an export into a cpt log and get the same report without changing your stack:
+**Keeping prices current.** The [OptimNow AI Pricing Hub](https://github.com/OptimNow/ai-pricing-hub-mcp)
+(the [OptimToken](https://optimtoken.optimnow.io) catalogue, 250+ models, refreshed
+daily) is the upstream:
 
 ```
-cpt import langfuse observations.json --task-field sessionId --attempt-field traceId
-cpt import litellm spend_logs.jsonl --task-field metadata.task_id --attempt-field session_id
+cpt prices refresh --provider anthropic            # shows what would change
+cpt prices refresh --provider anthropic --write    # accepts it
 ```
 
-The values shown are the defaults. Exports may be CSV, a JSON array, a JSON object holding an array, or JSONL. Only usage metadata is read; prompts and completions in the export are never copied into the log. Both importers were built from the documented export schemas rather than a live export, so run with `--dry-run` first and adjust the field flags if rows are skipped. LiteLLM spend logs do not break out cached tokens, so imports from LiteLLM show a 0% cache hit rate and may overstate cost.
+The default run prints new, removed and repriced models with the catalogue date, warns
+about models the hub cannot price fully, and flags cache-read prices that look wrong.
+Nothing is written without `--write`, so an upstream feed error never lands unseen.
 
-## Machine-readable output and MCP
+**Known limitation.** One rate per token class. Long-context tiers (Anthropic above
+200K input tokens, OpenAI above 272K) and batch discounts are not modelled; if your
+attempts cross those thresholds the report understates cost, and says which prices it
+applied.
 
-`cpt report --json` and `cpt compare --json` emit the group summaries as JSON. The same numbers are available to AI assistants and to the OptimNow AI ROI calculator over MCP:
+---
+
+## For AI assistants and other tools
+
+`cpt report --json` and `cpt compare --json` emit the summaries as JSON. The same
+numbers are available over MCP, so an assistant can answer "what does a solved ticket
+cost us on Sonnet, with the interval?" from your own log, and so the
+[OptimNow AI ROI Calculator](https://airoicalculator.optimnow.io) can use CPT_risk as
+its cost denominator instead of a per-token guess:
 
 ```
 pip install "cost-per-task[mcp]"
-cpt mcp                                    # stdio server
+cpt mcp
 ```
 
-Tools: `cpt_report`, `cpt_compare`, and `cpt_risk_denominator` (CPT_risk for one model, with sample size, intervals and price date, meant as the cost denominator in an ROI calculation). The `mcp` extra is the only optional dependency; the core stays dependency-free.
+Tools: `cpt_report`, `cpt_compare`, and `cpt_risk_denominator` (CPT_risk for one model
+with sample size, intervals and price date). The `mcp` extra is the only optional
+dependency; the core has none.
 
-## Roadmap
+---
 
-Implemented: Anthropic and OpenAI capture (plain and streaming), JSONL schema, dated pricing with Pricing Hub refresh, labelling CLI with CSV import and leak flags, Wilson and bootstrap intervals, P90, capped retries, pass^k, CPT_solved, CPT_risk, two-model comparison with K*, disclosure checklist, Langfuse and LiteLLM importers, JSON output, MCP server.
+## Directory structure
 
-Next: validate the importers against real exports, further providers (Bedrock, Vertex, xAI), long-context price tiers, PyPI release.
+```
+cost-per-task/
+├── README.md                     <- This file
+├── CLAUDE.md                     <- Project context and hard rules for AI assistants
+├── prices/                       <- Dated pricing tables (anthropic.json, openai.json, example.json)
+├── src/cost_per_task/
+│   ├── proxy.py                  <- The local capture proxy
+│   ├── providers/                <- Per-vendor usage extraction (anthropic.py, openai.py)
+│   ├── schema.py                 <- The JSONL record (OpenTelemetry GenAI aligned)
+│   ├── labels.py                 <- pass / fail / leak labels and CSV import
+│   ├── pricing.py, prices_hub.py <- Dated tables, per-step cost, Pricing Hub refresh
+│   ├── stats.py                  <- Wilson, bootstrap, percentile, p_N, pass^k
+│   ├── metrics.py                <- Attempts, groups, CPT_solved, CPT_risk, K*
+│   ├── report.py                 <- Text and JSON report, disclosure checklist
+│   ├── importers/                <- Langfuse and LiteLLM
+│   ├── mcp_server.py             <- MCP tools (optional extra)
+│   └── cli.py                    <- The cpt command
+└── tests/                        <- pytest; proxy tests run against fake vendor servers
+```
 
-## Licence
+---
 
-MIT. See [LICENSE](LICENSE).
+## Design principles
+
+- **Token counts come from the vendor, never from a local tokenizer.** The paper's
+  first rule, and the difference between a measurement and an estimate.
+- **No number without a date and a source.** Prices carry `as_of` and `source`; the
+  report repeats them. A price table without a date will not load.
+- **Never invent a price.** The Hub refresh skips models it cannot fully price and
+  flags anomalies rather than guessing; the human decides with `--write`.
+- **Never log content.** Keys, headers, prompts and completions stay out of the log,
+  enforced by a test.
+- **Report the spread, not just the mean.** P90, Wilson and bootstrap intervals are
+  always shown; small samples are visible as wide intervals rather than hidden.
+- **The log is append-only.** Outcomes and corrections live in the labels file.
+- **Nothing to install around it.** Standard library only. The MCP server is the one
+  optional extra, and it is only imported when asked for.
+
+---
+
+## Status
+
+Version 0.4.0, alpha. The Anthropic path has been validated end to end with a real
+Claude Code session. OpenAI, OpenRouter and the importers are implemented against the
+vendors' documented formats and tested against fake servers, not yet against live
+traffic; run with `--dry-run` or a small task first and check the numbers against your
+invoice. Confidence notes are in the code where a format was documented rather than
+observed.
+
+Roadmap: live validation of OpenAI and OpenRouter, importers checked on real exports,
+Bedrock / Vertex / xAI adapters, long-context price tiers, PyPI release.
+
+---
+
+## Contributing
+
+The most valuable contributions are real logs and real exports: "we ran this through
+the proxy and the invoice said X" is worth more than any feature. Also welcome:
+provider adapters, corrections to pricing rules with a source, and adversarial review of
+the statistics. Open an issue first for anything structural.
+
+---
+
+## About OptimNow
+
+OptimNow is a boutique FinOps consultancy helping organisations connect cloud and AI
+spend to measurable business value. Based in France with European reach.
+
+- Website: [optimnow.io](https://optimnow.io)
+- LinkedIn: [OptimNow](https://linkedin.com/company/optimnow)
+- GitHub: [github.com/OptimNow](https://github.com/OptimNow)
+
+**Open-source tools built by OptimNow:**
+
+| Tool | What it does |
+|---|---|
+| [OptimToken](https://optimtoken.optimnow.io) | Compare what 250+ models cost per request, with caching and batch factored in, plus compute instance rates across seven clouds. Also an MCP connector; `cpt prices refresh` reads from it |
+| [Cloud FinOps Skill & MCP](https://github.com/OptimNow/cloud-finops-skills) | FinOps knowledge for AI agents: cloud cost, AI inference economics, allocation, chargeback, waste detection runbooks |
+| [AI ROI Calculator](https://airoicalculator.optimnow.io) | Whether an AI project pays for itself: three-layer cost model, payback, break-even, sensitivity. Also an [MCP server](https://github.com/OptimNow/ai-roi-calculator-mcp); `cpt mcp` feeds it CPT_risk |
+| [AI Cost Readiness Assessment](https://aicostsfinops.optimnow.io) | Where your organisation stands on AI cost management |
+
+---
+
+## Acknowledgements
+
+The measurement model implemented here, including the token classes, cost per solved
+task, the capped-retry variant, the risk-adjusted cost with leak rate and cleanup cost,
+the break-even cleanup cost K*, the choice of Wilson and bootstrap intervals, pass^k,
+and the disclosure checklist, is the work of **[DoiT](https://www.doit.com)**, published
+as *Cost Per Task, Not Cost Per Token: A Measurement Framework for the Real Economics of
+Claude, OpenAI and Grok* (DoiT Research, 13 August 2026), released under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
+<https://www.doit.com/research/economics-of-claude-openai-and-grok>. Read the paper
+for the reasoning behind each estimator; this repository only makes them runnable, and
+the formula names in the report (C_attempt, CPT_solved, CPT_risk, K*) follow the paper
+so the two can be read side by side.
+
+Prices are sourced from the OptimNow AI Pricing Hub and cross-checked against the
+vendors' published price lists, with the date of each check recorded in the tables.
+
+This tool is independently maintained by OptimNow and is not affiliated with or
+endorsed by DoiT, Anthropic, OpenAI or OpenRouter. Any implementation errors are ours.
+
+---
+
+## License
+
+Licensed under the [MIT License](./LICENSE). You are free to use, modify and
+redistribute this software, including commercially, provided the copyright notice is
+kept. The methodology remains DoiT's; please cite their paper when you publish figures
+produced with this tool.
