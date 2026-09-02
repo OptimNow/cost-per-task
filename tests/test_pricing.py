@@ -80,6 +80,20 @@ def test_non_numeric_rate_rejected(tmp_path):
         _table(tmp_path, data)
 
 
+def test_reasoning_tokens_priced_at_output_rate_by_default(tmp_path):
+    table = _table(tmp_path)
+    record = _record(output_tokens=100_000, reasoning_tokens=100_000)
+    assert price_step(record, table) == pytest.approx(1.5 + 1.5)
+
+
+def test_reasoning_tokens_use_explicit_rate_when_given(tmp_path):
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["test-model"]["reasoning_per_mtok"] = 5.0
+    table = _table(tmp_path, data)
+    record = _record(reasoning_tokens=1_000_000)
+    assert price_step(record, table) == pytest.approx(5.0)
+
+
 def test_cost_per_attempt_groups_and_sums(tmp_path):
     table = _table(tmp_path)
     records = [

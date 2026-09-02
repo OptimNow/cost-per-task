@@ -1,9 +1,15 @@
 """Local reverse proxy that captures token usage from LLM API responses.
 
-The agent is pointed at this server via ANTHROPIC_BASE_URL (or the
-equivalent variable for another provider). Every request is forwarded to
-the real API and the response is returned unchanged; only usage metadata
-is written to the JSONL log.
+The agent is pointed at this server via ANTHROPIC_BASE_URL and
+OPENAI_BASE_URL. One port serves every configured provider: requests are
+routed by path (``/v1/messages`` is Anthropic, ``/v1/chat/completions`` and
+``/v1/responses`` are OpenAI), falling back to the auth header style. Each
+request is forwarded to the real API and the response returned unchanged;
+only usage metadata is written to the JSONL log.
+
+The single deliberate change to a request: streaming OpenAI Chat Completions
+calls get ``stream_options.include_usage`` set, since without it the stream
+never reports usage. This can be disabled.
 
 Security invariants:
 - request and response bodies are never logged
@@ -15,17 +21,28 @@ from __future__ import annotations
 
 import http.client
 import itertools
+import json
 import sys
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from .providers.anthropic import AnthropicAdapter
 from .providers.base import ParsedUsage, ProviderAdapter
+from .providers.openai import OpenAIAdapter
 from .schema import JsonlWriter, StepRecord
 
+ADAPTERS: dict[str, ProviderAdapter] = {
+    "anthropic": AnthropicAdapter(),
+    "openai": OpenAIAdapter(),
+}
+DEFAULT_UPSTREAMS = {name: adapter.default_upstream for name, adapter in ADAPTERS.items()}
+
+_ANTHROPIC_PATHS = ("/v1/messages",)
+_OPENAI_PATHS = ("/v1/chat/completions", "/v1/responses", "/v1/completions", "/v1/embeddings")
 _HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -39,26 +56,70 @@ _HOP_BY_HOP = {
 }
 
 
+def select_provider(path: str, headers, available: Iterable[str]) -> str | None:
+    """Pick the provider for a request; a lone configured provider gets
+    everything, so single-provider setups need no routing at all."""
+    available = list(available)
+    bare = path.split("?", 1)[0]
+    if bare.startswith(_ANTHROPIC_PATHS):
+        name = "anthropic"
+    elif bare.startswith(_OPENAI_PATHS):
+        name = "openai"
+    elif "anthropic-version" in headers or "x-api-key" in headers:
+        name = "anthropic"
+    elif "authorization" in headers:
+        name = "openai"
+    else:
+        name = None
+    if name in available:
+        return name
+    if len(available) == 1:
+        return available[0]
+    return None
+
+
+def inject_include_usage(path: str, body: bytes | None) -> bytes | None:
+    """Add stream_options.include_usage to a streaming Chat Completions request."""
+    if not body or not path.split("?", 1)[0].startswith("/v1/chat/completions"):
+        return body
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(data, dict) or not data.get("stream"):
+        return body
+    options = data.get("stream_options")
+    if isinstance(options, dict) and options.get("include_usage"):
+        return body
+    data["stream_options"] = {**(options if isinstance(options, dict) else {}), "include_usage": True}
+    return json.dumps(data).encode("utf-8")
+
+
 class ProxyServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(
         self,
         address: tuple[str, int],
-        upstream: str,
+        upstreams: dict[str, str],
         log_path: str | Path,
         task_id: str,
         attempt_id: str,
-        adapter: ProviderAdapter | None = None,
+        task_type: str | None = None,
+        inject_usage: bool = True,
     ) -> None:
         super().__init__(address, ProxyHandler)
-        split = urlsplit(upstream)
-        self.upstream_scheme = split.scheme or "https"
-        self.upstream_host = split.netloc
-        self.adapter: ProviderAdapter = adapter or AnthropicAdapter()
+        unknown = set(upstreams) - set(ADAPTERS)
+        if unknown:
+            raise ValueError(f"unknown provider(s): {', '.join(sorted(unknown))}")
+        self.routes: dict[str, SplitResult] = {
+            name: urlsplit(url) for name, url in upstreams.items()
+        }
         self.writer = JsonlWriter(log_path)
         self.task_id = task_id
         self.attempt_id = attempt_id
+        self.task_type = task_type
+        self.inject_usage = inject_usage
         self.captured_count = 0
         self._step_counter = itertools.count(1)
 
@@ -83,6 +144,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         pass
 
     def _handle(self) -> None:
+        provider = select_provider(self.path, self.headers, self.server.routes)
+        if provider is None:
+            self.send_error(404, "cpt: no upstream configured for this request")
+            return
+        adapter = ADAPTERS[provider]
+        upstream_url = self.server.routes[provider]
+
         length_header = self.headers.get("Content-Length")
         if length_header:
             body = self.rfile.read(int(length_header))
@@ -90,31 +158,35 @@ class ProxyHandler(BaseHTTPRequestHandler):
             body = self._read_chunked_body()
         else:
             body = None
+        if provider == "openai" and self.server.inject_usage:
+            body = inject_include_usage(self.path, body)
 
         headers = {}
         for name, value in self.headers.items():
-            if name.lower() in _HOP_BY_HOP or name.lower() == "accept-encoding":
+            lname = name.lower()
+            # Content-Length is re-derived from the forwarded body.
+            if lname in _HOP_BY_HOP or lname in ("accept-encoding", "content-length"):
                 continue
             headers[name] = value
         # Identity encoding so the usage block can be parsed in clear text.
         headers["Accept-Encoding"] = "identity"
-        headers["Host"] = self.server.upstream_host
+        headers["Host"] = upstream_url.netloc
 
         connection_cls = (
             http.client.HTTPSConnection
-            if self.server.upstream_scheme == "https"
+            if (upstream_url.scheme or "https") == "https"
             else http.client.HTTPConnection
         )
-        upstream = connection_cls(self.server.upstream_host, timeout=600)
+        upstream = connection_cls(upstream_url.netloc, timeout=600)
         started = time.monotonic()
         try:
             upstream.request(self.command, self.path, body=body, headers=headers)
             response = upstream.getresponse()
             content_type = response.getheader("Content-Type", "") or ""
             if "text/event-stream" in content_type:
-                self._relay_stream(response, started)
+                self._relay_stream(response, started, adapter)
             else:
-                self._relay_buffered(response, started)
+                self._relay_buffered(response, started, adapter)
         except OSError as exc:
             self.send_error(502, f"upstream unreachable: {exc.__class__.__name__}")
         finally:
@@ -165,7 +237,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.close_connection = True
         self.end_headers()
 
-    def _relay_buffered(self, response: http.client.HTTPResponse, started: float) -> None:
+    def _relay_buffered(
+        self, response: http.client.HTTPResponse, started: float, adapter: ProviderAdapter
+    ) -> None:
         payload = response.read()
         latency_ms = int((time.monotonic() - started) * 1000)
         # Log before relaying so the record is on disk by the time the
@@ -173,15 +247,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if response.status >= 400:
             self._note_upstream_error(response.status)
         else:
-            usage = self.server.adapter.parse_json_body(payload)
+            usage = adapter.parse_json_body(payload)
             if usage:
-                self._log(usage, latency_ms)
+                self._log(adapter.name, usage, latency_ms)
         self._send_response_headers(response, content_length=len(payload))
         self.wfile.write(payload)
 
-    def _relay_stream(self, response: http.client.HTTPResponse, started: float) -> None:
+    def _relay_stream(
+        self, response: http.client.HTTPResponse, started: float, adapter: ProviderAdapter
+    ) -> None:
         self._send_response_headers(response, close=True)
-        collector = self.server.adapter.sse_collector()
+        collector = adapter.sse_collector()
         pending = b""
         while True:
             # read1 returns as soon as bytes arrive, so events reach the
@@ -201,15 +277,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         usage = collector.result()
         if usage:
-            self._log(usage, latency_ms)
+            self._log(adapter.name, usage, latency_ms)
+        else:
+            print(
+                f"cpt: stream for {self.command} {self.path} ended without a usage "
+                "block; not logged",
+                file=sys.stderr,
+            )
 
-    def _log(self, usage: ParsedUsage, latency_ms: int) -> None:
+    def _log(self, provider: str, usage: ParsedUsage, latency_ms: int) -> None:
         record = StepRecord(
             task_id=self.server.task_id,
             attempt_id=self.server.attempt_id,
             step_id=self.server.next_step_id(),
             timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            provider=self.server.adapter.name,
+            provider=provider,
             model=usage.model,
             input_tokens=usage.input_tokens,
             cache_read_tokens=usage.cache_read_tokens,
@@ -220,6 +302,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             tool_call_count=len(usage.tool_names),
             tool_names=usage.tool_names,
             latency_ms=latency_ms,
+            task_type=self.server.task_type,
         )
         self.server.writer.append(record)
         self.server.captured_count += 1
@@ -227,13 +310,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
 def create_proxy(
     *,
-    upstream: str,
     log_path: str | Path,
     task_id: str,
     attempt_id: str,
+    upstreams: dict[str, str] | None = None,
+    task_type: str | None = None,
+    inject_usage: bool = True,
     host: str = "127.0.0.1",
     port: int = 0,
-    adapter: ProviderAdapter | None = None,
 ) -> ProxyServer:
-    """Build a proxy server; port 0 picks a free ephemeral port."""
-    return ProxyServer((host, port), upstream, log_path, task_id, attempt_id, adapter)
+    """Build a proxy server; port 0 picks a free ephemeral port. ``upstreams``
+    maps provider name to base URL (scheme and host only) and defaults to the
+    real APIs for every known provider."""
+    return ProxyServer(
+        (host, port),
+        dict(DEFAULT_UPSTREAMS) if upstreams is None else upstreams,
+        log_path,
+        task_id,
+        attempt_id,
+        task_type=task_type,
+        inject_usage=inject_usage,
+    )

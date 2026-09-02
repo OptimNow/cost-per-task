@@ -4,10 +4,11 @@ Rates are stored per million tokens. Every table must carry a currency and
 an ``as_of`` date: the DoiT disclosure checklist requires prices with dates,
 so an undated table is rejected.
 
-For providers that report reasoning tokens inside ``output_tokens`` (such
-as Anthropic), ``reasoning_per_mtok`` is null and the output rate covers
-both classes. A provider adapter that does split reasoning out must put
-only the visible tokens in ``output_tokens`` so nothing is double counted.
+Reasoning tokens are priced at ``reasoning_per_mtok`` when a table gives
+one, otherwise at the output rate, which is how both Anthropic and OpenAI
+bill today. Anthropic does not report reasoning separately (it is inside
+``output_tokens``, so ``reasoning_tokens`` is null); the OpenAI adapter
+splits reasoning out of the output count so nothing is double counted.
 """
 
 from __future__ import annotations
@@ -108,8 +109,13 @@ def price_step(record: StepRecord, table: PricingTable) -> float | None:
         + write_1h * rates.cache_write_1h_per_mtok
         + record.output_tokens * rates.output_per_mtok
     )
-    if record.reasoning_tokens and rates.reasoning_per_mtok is not None:
-        cost += record.reasoning_tokens * rates.reasoning_per_mtok
+    if record.reasoning_tokens:
+        reasoning_rate = (
+            rates.output_per_mtok
+            if rates.reasoning_per_mtok is None
+            else rates.reasoning_per_mtok
+        )
+        cost += record.reasoning_tokens * reasoning_rate
     return cost / 1_000_000
 
 

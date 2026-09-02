@@ -1,0 +1,39 @@
+{
+  "currency": "USD",
+  "as_of": "2026-09-02",
+  "source": "OptimNow AI Pricing Hub (priced 2026-09-01) for GPT-5.5 and GPT-5.4, cross-checked against developers.openai.com/api/docs/pricing on 2026-09-02, which also supplied GPT-5.4-mini and GPT-5.4-nano. Standard tier, short context (up to 272K tokens); the long-context tier above that is not modelled. OpenAI charges no cache write fee on these models (cache writes start at 1.25x input with GPT-5.6).",
+  "models": {
+    "gpt-5.5": {
+      "input_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.5,
+      "cache_write_5m_per_mtok": 0.0,
+      "cache_write_1h_per_mtok": 0.0,
+      "output_per_mtok": 30.0,
+      "reasoning_per_mtok": null
+    },
+    "gpt-5.4": {
+      "input_per_mtok": 2.5,
+      "cache_read_per_mtok": 0.25,
+      "cache_write_5m_per_mtok": 0.0,
+      "cache_write_1h_per_mtok": 0.0,
+      "output_per_mtok": 15.0,
+      "reasoning_per_mtok": null
+    },
+    "gpt-5.4-mini": {
+      "input_per_mtok": 0.75,
+      "cache_read_per_mtok": 0.075,
+      "cache_write_5m_per_mtok": 0.0,
+      "cache_write_1h_per_mtok": 0.0,
+      "output_per_mtok": 4.5,
+      "reasoning_per_mtok": null
+    },
+    "gpt-5.4-nano": {
+      "input_per_mtok": 0.2,
+      "cache_read_per_mtok": 0.02,
+      "cache_write_5m_per_mtok": 0.0,
+      "cache_write_1h_per_mtok": 0.0,
+      "output_per_mtok": 1.25,
+      "reasoning_per_mtok": null
+    }
+  }
+}

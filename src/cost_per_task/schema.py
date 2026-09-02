@@ -37,7 +37,8 @@ class StepRecord:
     tool_names: list[str] = field(default_factory=list)
     latency_ms: int = 0
     effort: str | None = None
-    outcome_label: str = "pending"  # pass | fail | pending
+    task_type: str | None = None
+    outcome_label: str = "pending"  # pass | fail | pending; the labels file wins at report time
     schema_version: int = SCHEMA_VERSION
 
     def to_json(self) -> str:
