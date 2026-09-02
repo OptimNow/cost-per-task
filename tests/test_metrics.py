@@ -132,6 +132,22 @@ def test_primary_model_is_the_largest_cost_share(table):
     assert attempts[0].cost == pytest.approx(10.0)
 
 
+def test_reported_cost_is_reconciled_against_table_price(table):
+    records = [_step("t1", "a1", 0, "model-a", 2), _step("t2", "a1", 1, "model-a", 4)]
+    records[0].reported_cost = 2.5  # OpenRouter charged more than the list price
+    attempts = build_attempts(records, table, {})
+    assert attempts[0].reported_cost == 2.5
+    assert attempts[1].reported_cost is None
+    summary = summarise(attempts, resamples=10)[0]
+    assert summary.reported_cost_attempts == 1
+    assert summary.reported_cost_total == pytest.approx(2.5)
+    assert summary.table_cost_for_reported == pytest.approx(2.0)
+    text = render_report(attempts, [summary], table)
+    assert "provider-reported cost: 2.5000 USD over 1 attempts" in text
+    assert "(+25.0%)" in text
+    assert "reconciliation:" in text
+
+
 def test_step_outcome_label_used_when_no_label_file(table):
     record = _step("t1", "a1", 0, "model-a", 1)
     record.outcome_label = "pass"

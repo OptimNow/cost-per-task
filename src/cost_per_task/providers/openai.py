@@ -15,6 +15,10 @@ which is read here when present and treated as a subset of the prompt total
 
 Streaming Chat Completions carry usage only when the request sets
 ``stream_options.include_usage``; the proxy injects that by default.
+
+OpenAI-compatible gateways reuse this adapter. OpenRouter adds ``usage.cost``
+(the USD amount it actually charged) when usage accounting is enabled; it is
+kept as ``reported_cost`` so the report can reconcile it with the table price.
 """
 
 from __future__ import annotations
@@ -40,6 +44,9 @@ def _usage_from_dict(usage: dict) -> ParsedUsage:
     parsed.cache_write_tokens = cache_write
     parsed.output_tokens = max(completion - reasoning, 0)
     parsed.reasoning_tokens = reasoning
+    cost = usage.get("cost")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        parsed.reported_cost = float(cost)
     return parsed
 
 

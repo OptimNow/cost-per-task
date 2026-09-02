@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cost-per-task"
-version = "0.3.0"
+version = "0.4.0"
 description = "Measure the real cost per completed task of LLM agents: capture token usage per API call, group into attempts and tasks, price them, and report cost per solved task."
 readme = "README.md"
 requires-python = ">=3.11"

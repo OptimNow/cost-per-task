@@ -167,6 +167,42 @@ class _FakeOpenAIHandler(BaseHTTPRequestHandler):
             _send(self, json.dumps(OPENAI_CHAT_RESPONSE).encode(), "application/json")
 
 
+OPENROUTER_RESPONSE = {
+    "id": "gen-1",
+    "object": "chat.completion",
+    "model": "anthropic/claude-haiku-4.5",
+    "provider": "Anthropic",
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "SECRET-COMPLETION-TEXT"}}],
+    "usage": {
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "prompt_tokens_details": {"cached_tokens": 0},
+        "completion_tokens_details": {"reasoning_tokens": 0},
+    },
+}
+
+
+class _FakeOpenRouterHandler(BaseHTTPRequestHandler):
+    """Mimics OpenRouter: the API lives under /api/v1, and usage.cost is
+    only returned when the request enables usage accounting."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        request = json.loads(self.rfile.read(length) or b"{}")
+        if not self.path.startswith("/api/v1/chat/completions"):
+            self.send_error(404, "not found: OpenRouter paths start with /api/v1")
+            return
+        payload = json.loads(json.dumps(OPENROUTER_RESPONSE))
+        if (request.get("usage") or {}).get("include"):
+            payload["usage"]["cost"] = 0.0016
+        _send(self, json.dumps(payload).encode(), "application/json")
+
+
 def _serve(handler_cls):
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -184,6 +220,14 @@ def fake_upstream():
 @pytest.fixture
 def fake_openai_upstream():
     server = _serve(_FakeOpenAIHandler)
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture
+def fake_openrouter_upstream():
+    server = _serve(_FakeOpenRouterHandler)
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
     server.server_close()

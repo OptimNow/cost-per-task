@@ -38,6 +38,7 @@ class StepRecord:
     latency_ms: int = 0
     effort: str | None = None
     task_type: str | None = None
+    reported_cost: float | None = None  # cost the provider itself reported (OpenRouter usage.cost)
     outcome_label: str = "pending"  # pass | fail | pending; the labels file wins at report time
     schema_version: int = SCHEMA_VERSION
 

@@ -40,6 +40,7 @@ class Attempt:
     tool_calls: int
     first_timestamp: str
     unpriced_steps: int
+    reported_cost: float | None = None  # sum of provider-reported step costs, if any step had one
     models: set[str] = field(default_factory=set)
     efforts: set[str] = field(default_factory=set)
     outcome: str | None = None  # pass | fail | None when unlabelled
@@ -85,6 +86,7 @@ def build_attempts(
             )
         weights = cost_by_model if any(cost_by_model.values()) else tokens_by_model
         primary = max(weights, key=lambda m: weights[m])
+        reported = [s.reported_cost for s in steps if s.reported_cost is not None]
 
         label = labels.get((task_id, attempt_id))
         if label is not None:
@@ -109,6 +111,7 @@ def build_attempts(
                 tool_calls=sum(s.tool_call_count for s in steps),
                 first_timestamp=steps[0].timestamp,
                 unpriced_steps=unpriced,
+                reported_cost=sum(reported) if reported else None,
                 models={s.model for s in steps},
                 efforts={s.effort for s in steps if s.effort},
                 outcome=outcome,
@@ -150,6 +153,11 @@ class GroupSummary:
     unpriced_steps: int
     resamples: int
     seed: int | None
+    # Reconciliation against what the provider said it charged (OpenRouter),
+    # over the attempts that reported a cost.
+    reported_cost_attempts: int = 0
+    reported_cost_total: float | None = None
+    table_cost_for_reported: float | None = None
 
 
 def _cpt_solved(attempts: list[Attempt]) -> float | None:
@@ -255,6 +263,7 @@ def _summarise_group(
     cache_hit_rate = (
         sum(a.cache_read_tokens for a in members) / prompt_total if prompt_total else None
     )
+    with_reported = [a for a in members if a.reported_cost is not None]
 
     return GroupSummary(
         model=model,
@@ -286,6 +295,11 @@ def _summarise_group(
         unpriced_steps=sum(a.unpriced_steps for a in members),
         resamples=resamples,
         seed=seed,
+        reported_cost_attempts=len(with_reported),
+        reported_cost_total=(
+            sum(a.reported_cost for a in with_reported) if with_reported else None
+        ),
+        table_cost_for_reported=sum(a.cost for a in with_reported) if with_reported else None,
     )
 
 

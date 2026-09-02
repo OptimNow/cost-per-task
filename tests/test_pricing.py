@@ -61,6 +61,38 @@ def test_prefix_match_for_dated_model_ids(tmp_path):
     assert price_step(record, table) == pytest.approx(3.0)
 
 
+def test_gateway_model_ids_match_without_vendor_prefix(tmp_path):
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["claude-haiku-4-5"] = data["models"].pop("test-model")
+    table = _table(tmp_path, data)
+    assert table.rates_for("anthropic/claude-haiku-4.5") is not None
+    assert table.rates_for("anthropic/claude-haiku-4-5-20251001") is not None
+    assert table.rates_for("openai/gpt-5.5") is None
+
+
+def test_load_many_merges_vendor_tables(tmp_path):
+    anthropic = json.loads(json.dumps(TABLE))
+    anthropic["models"] = {"claude-x": TABLE["models"]["test-model"]}
+    anthropic["as_of"] = "2026-08-27"
+    openai = json.loads(json.dumps(TABLE))
+    openai["models"] = {"gpt-y": TABLE["models"]["test-model"]}
+    openai["as_of"] = "2026-09-02"
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text(json.dumps(anthropic), encoding="utf-8")
+    b.write_text(json.dumps(openai), encoding="utf-8")
+    merged = PricingTable.load_many([a, b])
+    assert set(merged.models) == {"claude-x", "gpt-y"}
+    assert merged.as_of == "2026-08-27"  # the oldest, never overstating freshness
+
+    conflicting = json.loads(json.dumps(openai))
+    conflicting["models"] = {"claude-x": {**TABLE["models"]["test-model"], "output_per_mtok": 99.0}}
+    c = tmp_path / "c.json"
+    c.write_text(json.dumps(conflicting), encoding="utf-8")
+    with pytest.raises(PricingError):
+        PricingTable.load_many([a, c])
+
+
 def test_unpriced_model_returns_none(tmp_path):
     table = _table(tmp_path)
     assert price_step(_record(model="other-model"), table) is None

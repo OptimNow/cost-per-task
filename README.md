@@ -27,6 +27,19 @@ The proxy never logs API keys, headers, prompts or completions. Prompts may cont
 
 The one deliberate change the proxy makes to a request: streaming OpenAI Chat Completions calls get `stream_options.include_usage` set, because without it OpenAI never reports usage on a stream. Disable with `--no-inject-usage`.
 
+### OpenRouter and other OpenAI-compatible gateways
+
+Any gateway that speaks the OpenAI API can be the `openai` upstream, path prefix included:
+
+```
+cpt run --task-id issue-142 --openai-upstream https://openrouter.ai/api -- python my_agent.py
+cpt report --prices prices/anthropic.json --prices prices/openai.json
+```
+
+Three things happen for OpenRouter specifically. Requests get `usage: {include: true}` so OpenRouter returns native token counts and `usage.cost`, the amount it actually charged, which the log keeps as `reported_cost`; the report then prints a reconciliation line comparing it with the table price for the same attempts, so a gateway markup or a stale table shows up as a percentage rather than staying hidden. Model ids such as `anthropic/claude-haiku-4.5` are matched to the pricing table without the vendor prefix (and with dots as hyphens), and several vendor tables can be merged with repeated `--prices`. The `provider` field records the gateway host (`openrouter.ai`) rather than `openai`, so the log says who billed the call.
+
+Only one OpenAI-compatible upstream per proxy instance. Confidence on OpenRouter's usage-accounting behaviour is medium-high (documented, not yet tested against the live service).
+
 ## Install
 
 ```

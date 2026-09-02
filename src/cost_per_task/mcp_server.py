@@ -15,7 +15,11 @@ from .report import summary_to_dict, table_to_dict
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
-DEFAULT_PRICES = "prices/anthropic.json"
+DEFAULT_PRICES = "prices/anthropic.json"  # comma-separate several tables to merge vendors
+
+
+def _price_paths(prices: str) -> list[str]:
+    return [p.strip() for p in prices.split(",") if p.strip()]
 
 
 def tool_report(
@@ -36,7 +40,7 @@ def tool_report(
     analysis = load_analysis(
         log=log,
         labels=labels,
-        prices=prices,
+        prices=_price_paths(prices),
         by_task_type=by_task_type,
         task_type=task_type,
         cleanup_cost=cleanup_cost,
@@ -68,7 +72,7 @@ def tool_compare(
     analysis = load_analysis(
         log=log,
         labels=labels,
-        prices=prices,
+        prices=_price_paths(prices),
         by_task_type=False,
         task_type=task_type,
         cleanup_cost=cleanup_cost,
@@ -101,7 +105,7 @@ def tool_risk_denominator(
     analysis = load_analysis(
         log=log,
         labels=labels,
-        prices=prices,
+        prices=_price_paths(prices),
         by_task_type=False,
         task_type=task_type,
         cleanup_cost=cleanup_cost,

@@ -8,7 +8,15 @@ from email.message import Message
 
 from conftest import OPENAI_CHAT_SSE_WITH_USAGE, SSE_BODY
 
-from cost_per_task.proxy import create_proxy, inject_include_usage, select_provider
+from urllib.parse import urlsplit
+
+from cost_per_task.proxy import (
+    create_proxy,
+    inject_include_usage,
+    inject_openrouter_usage,
+    provider_label,
+    select_provider,
+)
 from cost_per_task.schema import read_jsonl
 
 
@@ -214,6 +222,67 @@ def test_openai_responses_api_json_and_stream(fake_openai_upstream, tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_openrouter_path_prefix_usage_accounting_and_provider_label(fake_openrouter_upstream, tmp_path):
+    log = tmp_path / "log.jsonl"
+    # The upstream carries OpenRouter's /api prefix; the agent still talks
+    # to the proxy as if it were api.openai.com. Usage accounting is forced
+    # because the fake runs on loopback rather than openrouter.ai.
+    server = create_proxy(
+        upstreams={"openai": fake_openrouter_upstream + "/api"},
+        log_path=log,
+        task_id="T1",
+        attempt_id="a1",
+        openrouter_usage=True,
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proxy_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        body = json.loads(
+            _post(proxy_url, "/v1/chat/completions", {"model": "anthropic/claude-haiku-4.5", "messages": []}, OPENAI_HEADERS)
+        )
+        assert body["usage"]["cost"] == 0.0016  # usage accounting was injected
+        record = _read_records(log, 1)[0]
+        assert record.model == "anthropic/claude-haiku-4.5"
+        assert (record.input_tokens, record.output_tokens) == (1000, 100)
+        assert record.reported_cost == 0.0016
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_provider_label_names_gateways_but_not_local_mocks():
+    assert provider_label("openai", urlsplit("https://api.openai.com")) == "openai"
+    assert provider_label("openai", urlsplit("https://openrouter.ai/api")) == "openrouter.ai"
+    assert provider_label("openai", urlsplit("https://api.x.ai")) == "x.ai"
+    assert provider_label("anthropic", urlsplit("http://127.0.0.1:5000")) == "anthropic"
+
+
+def test_openrouter_usage_auto_detected_from_host(tmp_path):
+    server = create_proxy(
+        upstreams={"openai": "https://openrouter.ai/api"}, log_path=tmp_path / "l.jsonl", task_id="T", attempt_id="a"
+    )
+    try:
+        assert server.openrouter_usage is True
+        assert server.provider_names["openai"] == "openrouter.ai"
+    finally:
+        server.server_close()
+    server = create_proxy(
+        upstreams={"openai": "https://api.openai.com"}, log_path=tmp_path / "l.jsonl", task_id="T", attempt_id="a"
+    )
+    try:
+        assert server.openrouter_usage is False
+    finally:
+        server.server_close()
+
+
+def test_inject_openrouter_usage():
+    plain = json.dumps({"model": "m", "messages": []}).encode()
+    assert json.loads(inject_openrouter_usage("/v1/chat/completions", plain))["usage"] == {"include": True}
+    explicit = json.dumps({"model": "m", "usage": {"include": False}}).encode()
+    assert inject_openrouter_usage("/v1/chat/completions", explicit) == explicit
+    assert inject_openrouter_usage("/v1/embeddings", plain) == plain
 
 
 def test_select_provider_by_path_then_headers():

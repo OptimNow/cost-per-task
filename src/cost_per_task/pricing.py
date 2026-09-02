@@ -83,16 +83,52 @@ class PricingTable:
             )
         return cls(data["currency"], data["as_of"], models, data.get("source"))
 
+    @classmethod
+    def load_many(cls, paths: list[str | Path]) -> "PricingTable":
+        """Merge several tables (one per provider, say) for logs that mix
+        vendors, as OpenRouter traffic does. Currencies must agree, a model
+        priced differently in two tables is an error, and the merged
+        ``as_of`` is the oldest so the disclosure never overstates freshness."""
+        tables = [cls.load(path) for path in paths]
+        if not tables:
+            raise PricingError("no pricing table given")
+        if len(tables) == 1:
+            return tables[0]
+        currencies = {t.currency for t in tables}
+        if len(currencies) > 1:
+            raise PricingError(f"pricing tables use different currencies: {sorted(currencies)}")
+        models: dict[str, ModelRates] = {}
+        for table in tables:
+            for model, rates in table.models.items():
+                if model in models and models[model] != rates:
+                    raise PricingError(f"model '{model}' is priced differently in two tables")
+                models[model] = rates
+        return cls(
+            tables[0].currency,
+            min(t.as_of for t in tables),
+            models,
+            " | ".join(t.source for t in tables if t.source) or None,
+        )
+
     def rates_for(self, model: str) -> ModelRates | None:
         """Exact match first, then the longest key the model id starts with,
-        so a dated id like claude-sonnet-5-20250929 finds claude-sonnet-5."""
-        if model in self.models:
-            return self.models[model]
-        best = None
-        for key in self.models:
-            if model.startswith(key) and (best is None or len(key) > len(best)):
-                best = key
-        return self.models[best] if best else None
+        so a dated id like claude-sonnet-5-20250929 finds claude-sonnet-5.
+        Gateway ids such as anthropic/claude-haiku-4.5 (OpenRouter) are tried
+        without the vendor prefix and with dots turned into hyphens."""
+        candidates = [model]
+        if "/" in model:
+            suffix = model.rsplit("/", 1)[1]
+            candidates.extend([suffix, suffix.replace(".", "-")])
+        for candidate in candidates:
+            if candidate in self.models:
+                return self.models[candidate]
+            best = None
+            for key in self.models:
+                if candidate.startswith(key) and (best is None or len(key) > len(best)):
+                    best = key
+            if best:
+                return self.models[best]
+        return None
 
 
 def price_step(record: StepRecord, table: PricingTable) -> float | None:

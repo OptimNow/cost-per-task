@@ -45,22 +45,28 @@ def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--task-type", help="free-text task category, e.g. coding")
     parser.add_argument(
-        "--anthropic-upstream", default=DEFAULT_UPSTREAMS["anthropic"], help="scheme and host only"
+        "--anthropic-upstream",
+        default=DEFAULT_UPSTREAMS["anthropic"],
+        help="base URL: scheme, host and optional path prefix",
     )
     parser.add_argument(
-        "--openai-upstream", default=DEFAULT_UPSTREAMS["openai"], help="scheme and host only"
+        "--openai-upstream",
+        default=DEFAULT_UPSTREAMS["openai"],
+        help="base URL of OpenAI or any OpenAI-compatible gateway, e.g. https://openrouter.ai/api",
     )
     parser.add_argument(
         "--no-inject-usage",
         action="store_true",
-        help="do not add stream_options.include_usage to streaming OpenAI chat requests",
+        help="do not add stream_options.include_usage (OpenAI) or usage.include (OpenRouter) to requests",
     )
 
 
 def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--labels", default=DEFAULT_LABELS)
-    parser.add_argument("--prices", required=True, help="pricing table JSON")
+    parser.add_argument(
+        "--prices", action="append", required=True, help="pricing table JSON; repeat to merge vendors"
+    )
     parser.add_argument("--cleanup-cost", type=float, help="K: cost of one leaked failure")
     parser.add_argument("--leak-rate", type=float, help="override L instead of using leak labels")
     parser.add_argument("--retry-cap", type=int, help="N for p_N (default: max attempts per task)")

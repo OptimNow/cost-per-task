@@ -85,6 +85,19 @@ def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
     return lines
 
 
+def _reconciliation(s: GroupSummary, currency: str) -> str:
+    table = s.table_cost_for_reported or 0.0
+    reported = s.reported_cost_total or 0.0
+    if table > 0:
+        delta = f"{100 * (reported - table) / table:+.1f}%"
+    else:
+        delta = "n/a"
+    return (
+        f"provider-reported cost: {_money(reported, currency)} over {s.reported_cost_attempts} "
+        f"attempts; table price for the same attempts {_money(table, currency)} ({delta})"
+    )
+
+
 def _group_section(s: GroupSummary, currency: str) -> list[str]:
     lines = [f"group: {_group_name(s)}"]
     lines.append(
@@ -127,6 +140,8 @@ def _group_section(s: GroupSummary, currency: str) -> list[str]:
         )
     if s.cache_hit_rate is not None:
         lines.append(f"  cache hit rate: {100 * s.cache_hit_rate:.1f}%")
+    if s.reported_cost_total is not None:
+        lines.append("  " + _reconciliation(s, currency))
     if s.unpriced_steps:
         lines.append(f"  warning: {s.unpriced_steps} steps had no price and count as zero cost")
     return lines
@@ -188,6 +203,12 @@ def _checklist(
             or "not measured (label leaks with cpt label --leak)"
         )
     )
+    reconciled = [s for s in summaries if s.reported_cost_total is not None]
+    if reconciled:
+        lines.append(
+            "  reconciliation: "
+            + "; ".join(f"{_group_name(s)} {_reconciliation(s, table.currency)}" for s in reconciled)
+        )
     k_values = {s.cleanup_cost for s in summaries if s.cleanup_cost is not None}
     lines.append(
         "  cleanup cost K assumed: "

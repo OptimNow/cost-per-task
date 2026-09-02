@@ -22,7 +22,7 @@ def load_analysis(
     *,
     log: str,
     labels: str,
-    prices: str,
+    prices: str | list[str],
     by_task_type: bool = True,
     task_type: str | None = None,
     k: int | None = None,
@@ -32,8 +32,10 @@ def load_analysis(
     resamples: int = 10_000,
     seed: int | None = None,
 ) -> Analysis:
-    """Raises OSError or PricingError when inputs cannot be read."""
-    table = PricingTable.load(prices)
+    """Raises OSError or PricingError when inputs cannot be read. ``prices``
+    may be several tables (one per vendor) merged for mixed-vendor logs."""
+    paths = [prices] if isinstance(prices, str) else list(prices)
+    table = PricingTable.load_many(paths)
     records = read_jsonl(log)
     attempts = build_attempts(records, table, load_labels(labels))
     if task_type:

@@ -23,6 +23,7 @@ class ParsedUsage:
     reasoning_tokens: int | None = None
     output_tokens: int = 0
     tool_names: list[str] = field(default_factory=list)
+    reported_cost: float | None = None
 
 
 class SseCollector(Protocol):

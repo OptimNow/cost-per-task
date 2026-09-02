@@ -4,10 +4,10 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 
 ## Architecture
 
-- `src/cost_per_task/proxy.py`: local reverse proxy serving Anthropic and OpenAI on one port (routed by path, then auth-header style); the agent is pointed at it via ANTHROPIC_BASE_URL / OPENAI_BASE_URL. Forwards requests unchanged except for injecting `stream_options.include_usage` on streaming OpenAI chat calls; logs only usage metadata.
+- `src/cost_per_task/proxy.py`: local reverse proxy serving Anthropic and OpenAI on one port (routed by path, then auth-header style); the agent is pointed at it via ANTHROPIC_BASE_URL / OPENAI_BASE_URL. Upstreams may carry a path prefix (OpenRouter: `https://openrouter.ai/api`); any OpenAI-compatible gateway works as the `openai` upstream and the log's `provider` becomes the gateway host. Forwards requests unchanged except for injecting `stream_options.include_usage` (streaming OpenAI chat) and `usage.include` (OpenRouter); logs only usage metadata plus `reported_cost` when the gateway states what it charged.
 - `src/cost_per_task/providers/`: per-provider usage extraction (JSON and SSE): `anthropic.py`, `openai.py` (Chat Completions and Responses; subtracts cached and reasoning tokens out of the totals). Design allows Bedrock, Vertex, xAI.
 - `src/cost_per_task/schema.py`: StepRecord (OpenTelemetry GenAI aligned) + JSONL persistence.
-- `src/cost_per_task/pricing.py`: dated pricing tables, per-step cost; `reasoning_per_mtok: null` means output rate.
+- `src/cost_per_task/pricing.py`: dated pricing tables, per-step cost; `reasoning_per_mtok: null` means output rate; `load_many` merges vendor tables (oldest `as_of` wins); `rates_for` strips gateway vendor prefixes and dot/hyphen differences.
 - `src/cost_per_task/labels.py`: pass/fail/leak labels in a separate append-only `cpt-labels.jsonl` (latest wins), CSV import.
 - `src/cost_per_task/stats.py`: Wilson interval, percentile, task-cluster bootstrap, p_N, pass^k. Standard library only.
 - `src/cost_per_task/metrics.py`: records to Attempt (primary model = largest cost share) to GroupSummary per model and task type; CPT_solved, CPT_risk, K*.
@@ -39,5 +39,5 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 
 ## Roadmap
 
-Phases 1 to 3 shipped (0.3.0): capture for both providers, labelling, statistics, CPT_solved / CPT_risk / K*, disclosure checklist, importers, Pricing Hub refresh, JSON output, MCP server.
+Phases 1 to 3 shipped (0.3.0), OpenRouter and OpenAI-compatible gateways in 0.4.0: capture for both providers, labelling, statistics, CPT_solved / CPT_risk / K*, disclosure checklist, importers, Pricing Hub refresh, JSON output, MCP server, provider-reported cost reconciliation.
 Next: validate importers on real exports, further providers (Bedrock, Vertex, xAI), long-context price tiers, PyPI release and public repo (apply the OptimNow public-repo hardening standard first).

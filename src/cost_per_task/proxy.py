@@ -7,9 +7,12 @@ routed by path (``/v1/messages`` is Anthropic, ``/v1/chat/completions`` and
 request is forwarded to the real API and the response returned unchanged;
 only usage metadata is written to the JSONL log.
 
-The single deliberate change to a request: streaming OpenAI Chat Completions
-calls get ``stream_options.include_usage`` set, since without it the stream
-never reports usage. This can be disabled.
+Two deliberate changes to requests, both switchable off: streaming OpenAI
+Chat Completions calls get ``stream_options.include_usage`` set, since
+without it the stream never reports usage; and calls bound for OpenRouter
+get ``usage: {include: true}`` so OpenRouter returns native token counts and
+the cost it charged. Any OpenAI-compatible gateway can be the ``openai``
+upstream; the upstream URL may carry a path prefix (``https://openrouter.ai/api``).
 
 Security invariants:
 - request and response bodies are never logged
@@ -95,6 +98,32 @@ def inject_include_usage(path: str, body: bytes | None) -> bytes | None:
     return json.dumps(data).encode("utf-8")
 
 
+def inject_openrouter_usage(path: str, body: bytes | None) -> bytes | None:
+    """Ask OpenRouter for usage accounting (native token counts plus the
+    charged cost) on a Chat Completions request that does not already."""
+    if not body or not path.split("?", 1)[0].endswith("/chat/completions"):
+        return body
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(data, dict) or "usage" in data:
+        return body
+    data["usage"] = {"include": True}
+    return json.dumps(data).encode("utf-8")
+
+
+def provider_label(adapter_name: str, upstream: SplitResult) -> str:
+    """The adapter's name when talking to the vendor itself, otherwise the
+    gateway host (``openrouter.ai``), so the log says who billed the call."""
+    default_host = urlsplit(ADAPTERS[adapter_name].default_upstream).netloc
+    host = upstream.netloc.rsplit("@", 1)[-1].split(":", 1)[0]
+    # Loopback upstreams are local stand-ins for the vendor (tests, mocks).
+    if upstream.netloc == default_host or host in ("127.0.0.1", "localhost", "::1"):
+        return adapter_name
+    return host[4:] if host.startswith("api.") else host
+
+
 class ProxyServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -107,6 +136,7 @@ class ProxyServer(ThreadingHTTPServer):
         attempt_id: str,
         task_type: str | None = None,
         inject_usage: bool = True,
+        openrouter_usage: bool | None = None,
     ) -> None:
         super().__init__(address, ProxyHandler)
         unknown = set(upstreams) - set(ADAPTERS)
@@ -115,11 +145,20 @@ class ProxyServer(ThreadingHTTPServer):
         self.routes: dict[str, SplitResult] = {
             name: urlsplit(url) for name, url in upstreams.items()
         }
+        self.provider_names = {
+            name: provider_label(name, split) for name, split in self.routes.items()
+        }
         self.writer = JsonlWriter(log_path)
         self.task_id = task_id
         self.attempt_id = attempt_id
         self.task_type = task_type
         self.inject_usage = inject_usage
+        # OpenRouter usage accounting: auto-detected from the upstream host
+        # unless forced, since OpenAI itself rejects the extra parameter.
+        if openrouter_usage is None:
+            openai_route = self.routes.get("openai")
+            openrouter_usage = bool(openai_route and "openrouter" in openai_route.netloc)
+        self.openrouter_usage = openrouter_usage
         self.captured_count = 0
         self._step_counter = itertools.count(1)
 
@@ -160,6 +199,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             body = None
         if provider == "openai" and self.server.inject_usage:
             body = inject_include_usage(self.path, body)
+            if self.server.openrouter_usage:
+                body = inject_openrouter_usage(self.path, body)
 
         headers = {}
         for name, value in self.headers.items():
@@ -178,15 +219,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
             else http.client.HTTPConnection
         )
         upstream = connection_cls(upstream_url.netloc, timeout=600)
+        upstream_path = upstream_url.path.rstrip("/") + self.path
+        provider_name = self.server.provider_names[provider]
         started = time.monotonic()
         try:
-            upstream.request(self.command, self.path, body=body, headers=headers)
+            upstream.request(self.command, upstream_path, body=body, headers=headers)
             response = upstream.getresponse()
             content_type = response.getheader("Content-Type", "") or ""
             if "text/event-stream" in content_type:
-                self._relay_stream(response, started, adapter)
+                self._relay_stream(response, started, adapter, provider_name)
             else:
-                self._relay_buffered(response, started, adapter)
+                self._relay_buffered(response, started, adapter, provider_name)
         except OSError as exc:
             self.send_error(502, f"upstream unreachable: {exc.__class__.__name__}")
         finally:
@@ -238,7 +281,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _relay_buffered(
-        self, response: http.client.HTTPResponse, started: float, adapter: ProviderAdapter
+        self,
+        response: http.client.HTTPResponse,
+        started: float,
+        adapter: ProviderAdapter,
+        provider_name: str,
     ) -> None:
         payload = response.read()
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -249,12 +296,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
         else:
             usage = adapter.parse_json_body(payload)
             if usage:
-                self._log(adapter.name, usage, latency_ms)
+                self._log(provider_name, usage, latency_ms)
         self._send_response_headers(response, content_length=len(payload))
         self.wfile.write(payload)
 
     def _relay_stream(
-        self, response: http.client.HTTPResponse, started: float, adapter: ProviderAdapter
+        self,
+        response: http.client.HTTPResponse,
+        started: float,
+        adapter: ProviderAdapter,
+        provider_name: str,
     ) -> None:
         self._send_response_headers(response, close=True)
         collector = adapter.sse_collector()
@@ -277,7 +328,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         usage = collector.result()
         if usage:
-            self._log(adapter.name, usage, latency_ms)
+            self._log(provider_name, usage, latency_ms)
         else:
             print(
                 f"cpt: stream for {self.command} {self.path} ended without a usage "
@@ -303,6 +354,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             tool_names=usage.tool_names,
             latency_ms=latency_ms,
             task_type=self.server.task_type,
+            reported_cost=usage.reported_cost,
         )
         self.server.writer.append(record)
         self.server.captured_count += 1
@@ -316,12 +368,14 @@ def create_proxy(
     upstreams: dict[str, str] | None = None,
     task_type: str | None = None,
     inject_usage: bool = True,
+    openrouter_usage: bool | None = None,
     host: str = "127.0.0.1",
     port: int = 0,
 ) -> ProxyServer:
     """Build a proxy server; port 0 picks a free ephemeral port. ``upstreams``
-    maps provider name to base URL (scheme and host only) and defaults to the
-    real APIs for every known provider."""
+    maps provider name to base URL (scheme, host and an optional path prefix
+    such as ``https://openrouter.ai/api``) and defaults to the vendors' own
+    APIs for every known provider."""
     return ProxyServer(
         (host, port),
         dict(DEFAULT_UPSTREAMS) if upstreams is None else upstreams,
@@ -330,4 +384,5 @@ def create_proxy(
         attempt_id,
         task_type=task_type,
         inject_usage=inject_usage,
+        openrouter_usage=openrouter_usage,
     )
