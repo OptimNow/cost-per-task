@@ -1,0 +1,183 @@
+name: Publish cost-per-task to PyPI
+
+# Release flow, mirroring OptimNow/cloud-finops-skills:
+#   1. bump the version in pyproject.toml and src/cost_per_task/__init__.py,
+#      update CHANGELOG.md, merge to main
+#   2. git tag vX.Y.Z && git push origin vX.Y.Z
+#   3. this workflow tests the tagged commit, builds sdist + wheel with the
+#      version pinned from the tag, publishes via PyPI trusted publishing,
+#      then creates the GitHub Release with generated notes.
+#
+# One-time setup (repository owner):
+#   - PyPI: project "cost-per-task", trusted publisher = GitHub, owner
+#     OptimNow, repository cost-per-task, workflow publish-pypi.yml,
+#     environment pypi. Register it as a "pending publisher" before the
+#     first release so the project name is claimed by this workflow.
+#   - GitHub: Settings -> Environments -> create "pypi" (optionally with a
+#     required reviewer, which turns every publish into an approval click).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+        description: 'Existing tag to (re)publish, e.g. v0.4.0'
+
+# Read-only by default; id-token and contents:write are granted per job below,
+# so the build job (which executes the build backend) never holds a token
+# that can authenticate to PyPI.
+permissions:
+  contents: read
+
+jobs:
+  resolve-tag:
+    name: Resolve and validate the tag
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          FALLBACK_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${INPUT_TAG}" ]]; then
+            tag="${FALLBACK_REF##*/}"
+          else
+            tag="${INPUT_TAG#V}"
+            tag="${tag#v}"
+            tag="v${tag}"
+            if [[ "$tag" != "${INPUT_TAG}" ]]; then
+              echo "::notice::normalised tag input '${INPUT_TAG}' to '${tag}'"
+            fi
+            # Works for private repositories too, unlike an anonymous ls-remote.
+            if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "::error::tag ${tag} does not exist in ${GITHUB_REPOSITORY}; refs are case sensitive"
+              exit 1
+            fi
+          fi
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([a-z0-9.]*)$ ]]; then
+            echo "::error::tag ${tag} is not a semantic version"
+            exit 1
+          fi
+          echo "ref=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing cost-per-task ${version} from tag ${tag}"
+
+  test:
+    name: Test the tagged commit
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ needs.resolve-tag.outputs.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e . pytest
+      - run: pytest -q
+
+  build:
+    name: Build sdist + wheel
+    needs: [resolve-tag, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ needs.resolve-tag.outputs.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Pin the package version to the tag
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          version = os.environ["VERSION"]
+          for path, pattern, replacement in (
+              ("pyproject.toml", r'^version = ".*"', f'version = "{version}"'),
+              ("src/cost_per_task/__init__.py", r'^__version__ = ".*"', f'__version__ = "{version}"'),
+          ):
+              file = pathlib.Path(path)
+              text = file.read_text(encoding="utf-8")
+              new, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
+              if count != 1:
+                  raise SystemExit(f"{path}: version line not found")
+              if new != text:
+                  print(f"::warning::{path} said a different version than the tag; pinned to {version}")
+              file.write_text(new, encoding="utf-8")
+          print(f"version pinned to {version}")
+          PY
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: pypi-dist
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # PyPI trusted publishing (OIDC)
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cost-per-task
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: pypi-dist
+          path: dist/
+      - name: Publish via trusted publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          packages-dir: dist/
+
+  github-release:
+    name: Create the GitHub Release
+    needs: [resolve-tag, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: pypi-dist
+          path: dist/
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          name: ${{ needs.resolve-tag.outputs.ref }}
+          tag_name: ${{ needs.resolve-tag.outputs.ref }}
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## cost-per-task ${{ needs.resolve-tag.outputs.ref }}
+
+            Published to PyPI: https://pypi.org/project/cost-per-task/${{ needs.resolve-tag.outputs.version }}/
+
+            ```
+            pip install cost-per-task==${{ needs.resolve-tag.outputs.version }}
+            ```
+
+            See CHANGELOG.md for the curated notes; the list below is generated from merged pull requests.
