@@ -17,7 +17,8 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 - `src/cost_per_task/prices_hub.py`: `cpt prices refresh`; fetches `optimtoken.optimnow.io/api/llm-models` with urllib, maps ids per provider (Anthropic dots to hyphens), derives cache-write rates from documented rules, diffs by default, writes only with `--write`, flags anomalous cache-read ratios.
 - `src/cost_per_task/mcp_server.py`: MCP tools (`cpt_report`, `cpt_compare`, `cpt_risk_denominator`); the SDK is the optional `[mcp]` extra (mcp 2.x `MCPServer`, 1.x `FastMCP` fallback) and is imported lazily.
 - `src/cost_per_task/cli.py`: `cpt serve`, `run`, `label`, `report`, `compare`, `import`, `prices refresh`, `mcp`.
-- `prices/anthropic.json`, `prices/openai.json`: verified, dated rates; `prices/example.json` is a zero-value template. `tests/fixtures/hub_sample.json` is a recorded hub sample.
+- `prices/anthropic.json`, `prices/openai.json`: verified, dated rates; `prices/example.json` is a zero-value template. `tests/fixtures/hub_sample.json` is a recorded hub sample. Claude Fable 5.1's cache-read rate is a documented special 0.025x (0.25 USD/MTok); the refresh command flags it as suspicious by design, and Anthropic's table confirms it.
+- `docs/testing-guide.md` plus `examples/` (`ask.py` stdlib client, `level1.ps1`, `level2.ps1`, `level2/` tasks): the guided model comparison for non-developers.
 
 ## Hard rules
 

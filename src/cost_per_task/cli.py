@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,10 @@ DEFAULT_LABELS = "cpt-labels.jsonl"
 
 
 def _new_attempt_id() -> str:
-    return datetime.now(timezone.utc).strftime("a%Y%m%dT%H%M%SZ")
+    # Timestamp for readability, random suffix so two attempts started in the
+    # same second never share an id (which would merge them into one attempt).
+    stamp = datetime.now(timezone.utc).strftime("a%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{secrets.token_hex(2)}"
 
 
 def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
@@ -231,11 +235,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _latest_attempt(records, task_id: str | None) -> tuple[str, str] | None:
-    candidates = [r for r in records if task_id is None or r.task_id == task_id]
-    if not candidates:
-        return None
-    latest = max(candidates, key=lambda r: (r.timestamp, r.attempt_id))
-    return latest.task_id, latest.attempt_id
+    # The log is append-only, so the last matching line is the latest attempt;
+    # timestamps have one-second resolution and cannot break ties.
+    for record in reversed(records):
+        if task_id is None or record.task_id == task_id:
+            return record.task_id, record.attempt_id
+    return None
 
 
 def _cmd_label(args: argparse.Namespace) -> int:

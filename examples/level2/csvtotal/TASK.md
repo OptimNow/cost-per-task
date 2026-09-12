@@ -1,0 +1,1 @@
+Implement `total_by_team(path)` in spend.py so that all tests in test_spend.py pass. It reads a CSV of cloud spend lines with columns team, service and amount, and returns a dictionary mapping each team to its total amount rounded to 2 decimals. Run `python -m pytest -q` to check. Do not modify the tests or the CSV file. Stop when the tests pass.
