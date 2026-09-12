@@ -67,7 +67,7 @@ answer you accepted at the time and later found to be wrong.
 
 ```
 cpt label pass --task issue-142
-cpt label fail --task issue-142 --attempt a20260901T212657Z
+cpt label fail --task issue-142 --attempt a20260901T212657Z-3f9c
 cpt label pass --leak --task issue-142
 ```
 

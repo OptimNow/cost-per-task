@@ -9,21 +9,25 @@ work. No programming is needed; you copy commands into PowerShell.
 ## What you are proving, and why these two models
 
 Both Fable models cost the same per token: $10 per million input, $50 per million
-output. On a per-token view they are identical. They differ in two things the
+output. On a per-token view they are identical. They differ in three things the
 per-token view cannot see:
 
 - **Reliability.** Fable 5.1 is the newer model. If it solves more tasks first time,
   its cost per *solved* task is lower even though its price list is the same.
+- **How much it thinks.** Both models always think before answering, and thinking is
+  billed at the output rate. If one thinks more per question, it costs more per
+  attempt at the same list price. Only a measurement can tell you which.
 - **Cache reads.** Fable 5.1 reads cached context at $0.25 per million tokens
   against $1.00 for Fable 5 (a documented special rate). Agent sessions re-read a
   large cached system prompt on every turn, so this shows up as a real gap in
   attempt cost on the coding tasks, and no gap at all on the simple questions.
 
-If the tool works, the report will show both effects, with intervals, from your own
-log. That is the demonstration.
+If the tool works, the report will show these effects, with intervals, from your
+own log. That is the demonstration.
 
-**Budget.** Level 1 costs about 5 cents in total. Level 2 costs real money: each
-Claude Code attempt writes roughly 45,000 tokens of system prompt into the cache
+**Budget.** Level 1 costs well under $1 in total (30 questions; each answer
+includes some billed thinking, typically a few cents' worth at most). Level 2 costs
+real money: each Claude Code attempt writes roughly 45,000 tokens of system prompt into the cache
 ($0.56 at Fable prices) before doing any work, so expect $1 to $2 per attempt and
 $20 to $40 for the full level. Level 3 depends on your tasks; plan $50 to $150.
 
@@ -67,11 +71,13 @@ $20 to $40 for the full level. Level 3 depends on your tasks; plan $50 to $150.
    platform.claude.com/docs (prompt caching pricing table) before accepting with
    `--write`; the disclosure checklist will carry whichever date the table has.
 
-5. **Start from a clean log.** The scripts append to `cpt-log.jsonl` and
-   `cpt-labels.jsonl` in the repository folder. If those files exist from earlier
-   experiments, rename them so the comparison starts empty.
+5. **Each level keeps its own files.** Level 1 writes `level1-log.jsonl` and
+   `level1-labels.jsonl`, Level 2 writes `level2-log.jsonl` and
+   `level2-labels.jsonl`, in the repository folder, so simple questions and coding
+   tasks never end up averaged together. To start a level again from scratch,
+   rename or delete its two files.
 
-## Level 1: five simple questions (5 minutes, about 5 cents)
+## Level 1: five simple questions (10 minutes, well under $1)
 
 Five questions with one right answer each: a multiplication, an invoice number to
 extract, a day count, a small JSON object, a sort. Each is asked three times per
@@ -89,15 +95,18 @@ You will see each attempt, the model's answer, `CHECK: pass` or `CHECK: fail`, a
 the label being recorded. Then:
 
 ```powershell
-python -m cost_per_task.cli report --prices prices\anthropic.json --by-model-only --seed 1
+python -m cost_per_task.cli report --log level1-log.jsonl --labels level1-labels.jsonl --prices prices\anthropic.json --seed 1
 ```
 
 **How to read it.** You get one group per model. Expect:
 
 - `attempts 15 over 5 tasks; labelled 15 (pass 15, fail 0, leaked 0)` or close to it.
   If a model failed a question, that is data, not a problem.
-- `attempt cost C: mean 0.0014 USD` or thereabouts, nearly identical for both
-  models. With no cached context there is nothing for the cache-read rate to act on.
+- `attempt cost C: mean` of a fraction of a cent to a few cents. The question
+  itself is about 40 tokens; most of the cost is the model's thinking, billed as
+  output. Compare the two models here: with no cached context the cheaper cache
+  reads of Fable 5.1 play no part, so any gap in mean cost comes from how much each
+  model chose to think. The per-attempt table's `output` column shows it.
 - `success rate p: 1.000 (Wilson 95%: 0.796 to 1.000)`. Fifteen successes out of
   fifteen still leaves a lower bound of about 80%: the interval is the tool telling
   you how little fifteen tries actually prove. It narrows as n grows.
@@ -105,16 +114,16 @@ python -m cost_per_task.cli report --prices prices\anthropic.json --by-model-onl
 - `pass^3`: the share of tasks solved on all three tries. Expect 1.000 here.
 
 What this level proves: capture works (tokens are counted from the API response),
-pricing works (the mean cost matches roughly 40 input tokens at $10 per million
-plus 20 output tokens at $50 per million), labelling works, and the statistics
-behave sensibly. It does not yet show a difference between the models, and it
-should not.
+pricing works (each attempt's cost is its input tokens at $10 per million plus its
+output tokens, thinking included, at $50 per million; you can check one line by
+hand), labelling works, and the statistics behave sensibly. Success rates should be
+equal; a difference in cost, if any, is thinking volume.
 
 Then compare them explicitly, so you see the comparison output once on data where
 the answer is "no difference":
 
 ```powershell
-python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --prices prices\anthropic.json --seed 1
+python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log level1-log.jsonl --labels level1-labels.jsonl --prices prices\anthropic.json --seed 1
 ```
 
 With no leaks recorded, K* is undefined and the report says so. That is correct.
@@ -142,8 +151,8 @@ passing means `pass`, anything else means `fail`. Three attempts per task per mo
 Then:
 
 ```powershell
-python -m cost_per_task.cli report --prices prices\anthropic.json --by-model-only --seed 1 --harness "Claude Code, -p mode, default effort"
-python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --prices prices\anthropic.json --seed 1
+python -m cost_per_task.cli report --log level2-log.jsonl --labels level2-labels.jsonl --prices prices\anthropic.json --seed 1 --harness "Claude Code, -p mode, default effort"
+python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log level2-log.jsonl --labels level2-labels.jsonl --prices prices\anthropic.json --seed 1
 ```
 
 **How to read it.**
@@ -192,7 +201,7 @@ a client. The paper's protocol, applied:
    python -m cost_per_task.cli label --import labels.csv
    ```
 
-   The attempt ids are in `cpt-log.jsonl` and in the output of each `cpt run`.
+   The attempt ids are in the log file and in the output of each `cpt run`.
 5. **Record leaks.** A leak is an attempt you marked `pass` at the time and later
    found to be wrong: the ticket was reopened, the fix broke something else, the
    summary had a wrong figure. Mark it `leaked` (and keep `pass`, since it was
@@ -232,6 +241,6 @@ third model such as Sonnet 5 to see where the cheaper tier stops being cheaper.
 ## What to keep from a run
 
 For your own records, and for anyone who wants to check the result: the two files
-`cpt-log.jsonl` and `cpt-labels.jsonl`, the `prices\anthropic.json` used, and the
+level's log and labels files, the `prices\anthropic.json` used, and the
 full text of `cpt report` and `cpt compare`. Together they let someone reproduce
 every number in the report; `--seed 1` makes the bootstrap intervals reproducible too.

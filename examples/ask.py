@@ -25,7 +25,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Ask a Claude model one question.")
     parser.add_argument("prompt")
     parser.add_argument("--model", default="claude-fable-5-1")
-    parser.add_argument("--max-tokens", type=int, default=200)
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=8000,
+        help="Fable models always think first, and thinking counts toward this cap",
+    )
     parser.add_argument("--expect", help="text the answer must contain to count as a pass")
     args = parser.parse_args()
 
@@ -58,13 +63,19 @@ def main() -> int:
         print(f"ask.py: API error {exc.code}: {detail}", file=sys.stderr)
         return 3
 
+    if data.get("stop_reason") == "max_tokens":
+        print("ask.py: warning: the answer hit --max-tokens and may be cut off", file=sys.stderr)
     answer = "".join(
         block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"
     ).strip()
     print(answer)
 
     if args.expect is not None:
-        passed = args.expect.strip().lower() in answer.lower()
+        # Ignore spacing and case, so "apple,banana" matches "apple, banana".
+        def squash(text: str) -> str:
+            return "".join(text.split()).lower()
+
+        passed = squash(args.expect) in squash(answer)
         print(f"CHECK: {'pass' if passed else 'fail'} (expected '{args.expect}')", file=sys.stderr)
         return 0 if passed else 1
     return 0

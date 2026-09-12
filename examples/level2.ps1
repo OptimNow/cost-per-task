@@ -11,8 +11,8 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Model,
     [int] $Attempts = 3,
-    [string] $Log = "cpt-log.jsonl",
-    [string] $Labels = "cpt-labels.jsonl",
+    [string] $Log = "level2-log.jsonl",
+    [string] $Labels = "level2-labels.jsonl",
     [string] $Scratch = "$env:TEMP\cpt-level2"
 )
 
@@ -39,7 +39,7 @@ foreach ($task in $tasks) {
         try {
             python -m cost_per_task.cli run --task-id $task.Name --task-type coding --log (Join-Path $repo $Log) -- `
                 claude -p $prompt --model $Model --permission-mode acceptEdits `
-                --allowedTools "Read,Write,Edit,Glob,Grep,Bash(python*)"
+                --allowedTools "Read,Write,Edit,Glob,Grep,Bash(python:*)"
             $agentExit = $LASTEXITCODE
 
             python -m pytest -q 2>&1 | Select-Object -Last 3
@@ -61,4 +61,4 @@ foreach ($task in $tasks) {
 
 Write-Host ""
 Write-Host "Done. Now run:" -ForegroundColor Green
-Write-Host "  python -m cost_per_task.cli report --log $Log --labels $Labels --prices prices\anthropic.json --by-model-only --seed 1 --harness `"Claude Code, -p mode, default effort`""
+Write-Host "  python -m cost_per_task.cli report --log $Log --labels $Labels --prices prices\anthropic.json --seed 1 --harness `"Claude Code, -p mode, default effort`""

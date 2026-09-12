@@ -10,8 +10,8 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Model,
     [int] $Attempts = 3,
-    [string] $Log = "cpt-log.jsonl",
-    [string] $Labels = "cpt-labels.jsonl"
+    [string] $Log = "level1-log.jsonl",
+    [string] $Labels = "level1-labels.jsonl"
 )
 
 if (-not $env:ANTHROPIC_API_KEY) {
@@ -49,4 +49,4 @@ foreach ($task in $tasks) {
 
 Write-Host ""
 Write-Host "$Model : $passes of $total attempts passed. Now run:" -ForegroundColor Green
-Write-Host "  python -m cost_per_task.cli report --log $Log --labels $Labels --prices prices\anthropic.json --by-model-only --seed 1"
+Write-Host "  python -m cost_per_task.cli report --log $Log --labels $Labels --prices prices\anthropic.json --seed 1"
