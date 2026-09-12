@@ -78,8 +78,8 @@ answer, pass it as the cleanup cost.
 cpt report --prices prices/anthropic.json --cleanup-cost 25 --harness "Claude Code 2.1"
 ```
 
-#Want a guided first run? [docs/testing-guide.md](docs/testing-guide.md) compares
-two models step by step, from five-cent questions to a realistic workload, and
+Want a guided first run? [docs/testing-guide.md](docs/testing-guide.md) compares
+two models step by step, from questions costing cents to a realistic workload, and
 explains how to read every line of the report.
 
 ### What a report looks like
