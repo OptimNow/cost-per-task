@@ -311,3 +311,34 @@ def test_inject_include_usage_only_touches_streaming_chat():
     assert inject_include_usage("/v1/chat/completions", non_streaming) == non_streaming
     assert inject_include_usage("/v1/responses", streaming) == streaming
     assert inject_include_usage("/v1/chat/completions", b"not json") == b"not json"
+
+
+from cost_per_task.proxy import extract_effort
+
+
+def test_extract_effort_reads_only_the_effort_setting():
+    anthropic = json.dumps({"model": "m", "output_config": {"effort": "xhigh"}, "messages": []}).encode()
+    assert extract_effort("anthropic", anthropic) == "xhigh"
+    assert extract_effort("openai", json.dumps({"reasoning_effort": "low"}).encode()) == "low"
+    assert extract_effort("openai", json.dumps({"reasoning": {"effort": "medium"}}).encode()) == "medium"
+    assert extract_effort("anthropic", json.dumps({"messages": [{"content": "effort"}]}).encode()) is None
+    assert extract_effort("anthropic", b"not json but mentions effort") is None
+    assert extract_effort("anthropic", None) is None
+
+
+def test_effort_is_logged_from_the_request(fake_upstream, tmp_path):
+    log = tmp_path / "log.jsonl"
+    server = create_proxy(upstreams={"anthropic": fake_upstream}, log_path=log, task_id="T1", attempt_id="a1")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proxy_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        _post(proxy_url, "/v1/messages",
+              {"model": "claude-sonnet-5", "output_config": {"effort": "high"}, "messages": []},
+              {"content-type": "application/json", "x-api-key": "sk-test-DUMMY"})
+        _post(proxy_url, "/v1/messages", {"model": "claude-sonnet-5", "messages": []},
+              {"content-type": "application/json", "x-api-key": "sk-test-DUMMY"})
+        records = _read_records(log, 2)
+        assert [r.effort for r in records] == ["high", None]
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -161,8 +161,8 @@ own token counts out of the response. Token counts are never estimated with a lo
 tokenizer; they are what the vendor billed.
 
 **What is never logged.** API keys, headers, prompts and completions. Prompts often
-contain client data and have no place in a metrics file. Only token counts, model,
-provider, task and attempt ids, tool names and latency are written. A test asserts this
+contain client data and have no place in a metrics file. Only token counts, model, provider, task and attempt ids, tool names, latency and the
+requested effort level are written. A test asserts this
 on every commit.
 
 **Labels live apart from the log.** The usage log is append-only and never rewritten;

@@ -26,10 +26,10 @@ If the tool works, the report will show these effects, with intervals, from your
 own log. That is the demonstration.
 
 **Budget.** Level 1 costs well under $1 in total (30 questions; each answer
-includes some billed thinking, typically a few cents' worth at most). Level 2 costs
-real money: each Claude Code attempt writes roughly 45,000 tokens of system prompt into the cache
-($0.56 at Fable prices) before doing any work, so expect $1 to $2 per attempt and
-$20 to $40 for the full level. Level 3 depends on your tasks; plan $50 to $150.
+includes some billed thinking, typically a few cents' worth at most). Level 2 costs real money: every Claude Code attempt first writes its system
+prompt into the prompt cache, then works for several turns. Expect roughly $0.50 to
+$1.50 per attempt and $10 to $30 for the level, with a hard cap of $5 on any single
+attempt. You see the real figure after the first model, before paying for the second. Level 3 depends on your tasks; plan $50 to $150.
 
 ## Setup (once, about ten minutes)
 
@@ -128,7 +128,7 @@ python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log level1
 
 With no leaks recorded, K* is undefined and the report says so. That is correct.
 
-## Level 2: three small coding tasks with Claude Code (30 to 60 minutes, $20 to $40)
+## Level 2: three small coding tasks with Claude Code (30 to 60 minutes, $10 to $30)
 
 Three tasks in `examples\level2\`, each a folder with a task description, a Python
 file to complete or fix, and tests that decide success:
@@ -141,44 +141,63 @@ file to complete or fix, and tests that decide success:
 
 For every attempt the script copies the task folder to a fresh scratch directory,
 runs Claude Code in print mode through the proxy, then runs the tests. Tests
-passing means `pass`, anything else means `fail`. Three attempts per task per model.
+passing means `pass`, anything else means `fail`. Three attempts per task per model,
+and each label is attached to that attempt's own id.
+
+The setup, called the harness, is identical for both models, and the script prints
+it so the report can disclose it:
+
+- **Bare mode.** Claude Code runs with `--bare`: none of your personal hooks,
+  memory, CLAUDE.md files or MCP servers load, and it signs in only with the API key
+  you set. Your own setup would otherwise add tokens and behaviour that belong to
+  you, not to the model.
+- **Effort pinned at high.** Claude Code's default can change between versions, so
+  pinning it makes the run reproducible. The proxy also reads the effort from every
+  request, so the checklist shows what was actually sent.
+- **A $5 cap per attempt.** An attempt that reaches it stops, and the tests decide
+  its label. None of these tasks should come close.
+- **Permissions.** Claude Code may edit files and run Python in the scratch folder
+  without asking. If a run stalls waiting for permission, tell me; the flags are the
+  first place to look.
+
+**Run Fable 5.1 first**, and check what it cost before paying for the second model:
 
 ```powershell
 .\examples\level2.ps1 -Model claude-fable-5-1
+```
+
+At the end the script prints two commands, a report and a comparison, with the
+harness description already filled in. Run the report: its `total` line is what the
+nine attempts actually cost, and your best estimate for the second run. Then:
+
+```powershell
 .\examples\level2.ps1 -Model claude-fable-5
 ```
 
-Then:
-
-```powershell
-python -m cost_per_task.cli report --log level2-log.jsonl --labels level2-labels.jsonl --prices prices\anthropic.json --seed 1 --harness "Claude Code, -p mode, default effort"
-python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log level2-log.jsonl --labels level2-labels.jsonl --prices prices\anthropic.json --seed 1
-```
+and run both printed commands again.
 
 **How to read it.**
 
-- `attempt cost C: mean` is now dollars, not tenths of a cent, and dominated by
-  the cache write of Claude Code's system prompt (visible in the per-attempt table
-  as `cache_w` tokens). Compare the two models' means: Fable 5.1 should be lower,
-  and the gap should grow with the number of turns an attempt took, because each
-  turn re-reads the cached prompt at a quarter of the price.
-- `P90` versus `mean`: the same task will not cost the same twice. If one attempt
+- `attempt cost C: mean` is now tens of cents rather than fractions of a cent. Most
+  of it is Claude Code writing its system prompt into the cache on the first turn,
+  then re-reading it on every later turn. The re-reading is where the prices differ:
+  Fable 5.1 pays a quarter of Fable 5's cache-read price. Expect Fable 5.1's mean to
+  be lower even if both models behave identically, and the gap to grow with the
+  number of turns, shown as `steps` in the per-attempt table.
+- `cache hit rate`: the share of prompt tokens served from cache. It should be
+  similar for both; what differs is the price of those hits.
+- `P90` against `mean`: the same task will not cost the same twice. If one attempt
   took a long detour, P90 shows it while the mean smooths it away.
-- `success rate p` with its interval, and `CPT_solved`: if one model failed a task
-  once, its cost per solved task jumps, because the failed attempt is paid for by
-  the successful ones. This is the paper's central point and the first place the
-  models may separate.
-- `cache hit rate` in the checklist: how much of each model's prompt traffic was
-  served from cache. Roughly equal for both; the *price* of those hits differs.
-- The `disclosure checklist` at the end is what you would publish alongside any
-  claim: model versions, price dates, harness, n, k, intervals. Keep it.
+- `success rate p` and `CPT_solved`: if a model fails an attempt, its cost per
+  solved task rises above its mean attempt cost, because the failed attempt is paid
+  for by the successful ones. This is the paper's central point.
+- `pass^3`: a task solved on only two of its three tries counts against this one.
+- The `disclosure checklist` at the end shows harness, effort, n, k and intervals.
+  Keep it with any figure you quote.
 
-Two notes on the setup. The Claude Code flags `--permission-mode acceptEdits` and
-`--allowedTools` let it edit files and run Python without asking; if a run stops
-waiting for permission, that is the place to look (confidence on the exact flag
-set is medium-high; the Claude Code documentation is the reference). And Claude
-Code's own default effort for Fable models applies; if you want to test the effect
-of effort, that is a Level 3 variable.
+One limit to keep in mind: with nine attempts per model, one failure moves the
+success rate by eleven points, and the intervals stay wide. Level 2 shows the
+mechanism working on a real agent; it cannot crown a winner. That is Level 3's job.
 
 ## Level 3: a realistic comparison on your own work
 
@@ -234,6 +253,8 @@ third model such as Sonnet 5 to see where the cheaper tier stops being cheaper.
 | `cpt: upstream returned HTTP 401` | key rejected | re-copy the key from the Console; check it is not revoked |
 | `cpt: upstream returned HTTP 400` mentioning retention | Fable needs 30-day data retention | Console setting for the organisation |
 | `captured 0 steps` | nothing reached the API, or every call failed | read the lines above it; the proxy prints every upstream error |
+| `no API calls were captured for this attempt; not labelled` | Claude Code stopped before calling the API | read the lines above it; usually the key, retention or a Claude Code error |
+| `Claude Code exited with 1` then a label | the attempt ended early, for example at the $5 cap | the tests still decide the label; a cap hit is a real, costed failure |
 | `warning: no price for model` | a model id the table does not know | add it to `prices\anthropic.json` with a dated source |
 | `CPT_solved: n/a` | no labelled pass yet | label the attempts, or check the labels file path |
 | interval very wide | small n | it is telling the truth; add attempts |

@@ -70,7 +70,7 @@ def _group_name(summary: GroupSummary) -> str:
 
 def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
     header = (
-        f"{'task':<12} {'attempt':<18} {'model':<28} {'type':<10} {'steps':>5} "
+        f"{'task':<12} {'attempt':<23} {'model':<28} {'type':<10} {'steps':>5} "
         f"{'cost':>10} {'outcome':<9}"
     )
     lines = [header, "-" * len(header)]
@@ -79,7 +79,7 @@ def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
         if a.leaked:
             outcome += "+leak"
         lines.append(
-            f"{a.task_id[:12]:<12} {a.attempt_id[:18]:<18} {a.model[:28]:<28} "
+            f"{a.task_id[:12]:<12} {a.attempt_id[:23]:<23} {a.model[:28]:<28} "
             f"{(a.task_type or '-')[:10]:<10} {a.steps:>5} {a.cost:>10.4f} {outcome:<9}"
         )
     return lines

@@ -17,7 +17,8 @@ upstream; the upstream URL may carry a path prefix (``https://openrouter.ai/api`
 Security invariants:
 - request and response bodies are never logged
 - headers, including API keys, are never logged
-- the log holds only token counts, model, provider, ids, latency and tool names
+- the log holds only token counts, model, provider, ids, latency, tool names
+  and the effort level the request asked for
 """
 
 from __future__ import annotations
@@ -96,6 +97,35 @@ def inject_include_usage(path: str, body: bytes | None) -> bytes | None:
         return body
     data["stream_options"] = {**(options if isinstance(options, dict) else {}), "include_usage": True}
     return json.dumps(data).encode("utf-8")
+
+
+def extract_effort(provider: str, body: bytes | None) -> str | None:
+    """The effort or reasoning level the client asked for, read from the
+    request body (Anthropic ``output_config.effort``, OpenAI
+    ``reasoning_effort`` or ``reasoning.effort``). Only this one setting is
+    kept, for the disclosure checklist; nothing else in the body is stored."""
+    if not body or b"effort" not in body:
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    candidates = []
+    if provider == "anthropic":
+        config = data.get("output_config")
+        if isinstance(config, dict):
+            candidates.append(config.get("effort"))
+    else:
+        candidates.append(data.get("reasoning_effort"))
+        reasoning = data.get("reasoning")
+        if isinstance(reasoning, dict):
+            candidates.append(reasoning.get("effort"))
+    for value in candidates:
+        if isinstance(value, str) and value:
+            return value[:20]
+    return None
 
 
 def inject_openrouter_usage(path: str, body: bytes | None) -> bytes | None:
@@ -197,6 +227,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             body = self._read_chunked_body()
         else:
             body = None
+        self._request_effort = extract_effort(provider, body)
         if provider == "openai" and self.server.inject_usage:
             body = inject_include_usage(self.path, body)
             if self.server.openrouter_usage:
@@ -353,6 +384,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             tool_call_count=len(usage.tool_names),
             tool_names=usage.tool_names,
             latency_ms=latency_ms,
+            effort=getattr(self, "_request_effort", None),
             task_type=self.server.task_type,
             reported_cost=usage.reported_cost,
         )

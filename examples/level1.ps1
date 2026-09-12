@@ -32,15 +32,18 @@ $total = 0
 foreach ($task in $tasks) {
     for ($i = 1; $i -le $Attempts; $i++) {
         $total++
+        # The script names each attempt, so the label always lands on this
+        # attempt and never on an earlier one.
+        $attemptId = "a" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'") + "-" + ("{0:x4}" -f (Get-Random -Maximum 65536))
         Write-Host ""
         Write-Host "== $($task.Id) attempt $i of $Attempts on $Model" -ForegroundColor Cyan
-        python -m cost_per_task.cli run --task-id $task.Id --task-type simple --log $Log -- `
+        python -m cost_per_task.cli run --task-id $task.Id --attempt-id $attemptId --task-type simple --log $Log -- `
             python examples\ask.py --model $Model --expect $task.Expect $task.Prompt
         if ($LASTEXITCODE -eq 0) {
-            python -m cost_per_task.cli label pass --task $task.Id --log $Log --labels $Labels
+            python -m cost_per_task.cli label pass --task $task.Id --attempt $attemptId --labels $Labels
             $passes++
         } elseif ($LASTEXITCODE -eq 1) {
-            python -m cost_per_task.cli label fail --task $task.Id --log $Log --labels $Labels
+            python -m cost_per_task.cli label fail --task $task.Id --attempt $attemptId --labels $Labels
         } else {
             Write-Warning "attempt did not reach the model (exit code $LASTEXITCODE); not labelled"
         }
