@@ -91,7 +91,7 @@ class PricingTable:
         ``as_of`` is the oldest so the disclosure never overstates freshness."""
         tables = [cls.load(path) for path in paths]
         if not tables:
-            raise PricingError("no pricing table given")
+            raise PricingError("no pricing table found; pass --prices PATH")
         if len(tables) == 1:
             return tables[0]
         currencies = {t.currency for t in tables}
@@ -165,3 +165,17 @@ def cost_per_attempt(
         if cost is not None:
             totals[(record.task_id, record.attempt_id)] += cost
     return dict(totals)
+
+
+def default_table_paths(names: tuple[str, ...] = ("anthropic.json", "openai.json")) -> list[str]:
+    """The dated price tables shipped with cost-per-task: ``prices/<name>`` in
+    the current folder, else inside the installed package, else in the
+    repository an editable install points at. Missing tables are skipped."""
+    here = Path(__file__).resolve()
+    found = []
+    for name in names:
+        for candidate in (Path("prices") / name, here.parent / "prices" / name, here.parents[2] / "prices" / name):
+            if candidate.exists():
+                found.append(str(candidate))
+                break
+    return found

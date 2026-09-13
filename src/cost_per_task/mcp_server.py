@@ -11,15 +11,16 @@ import sys
 
 from .analysis import load_analysis, pick_model
 from .metrics import break_even_cleanup_cost
+from .pricing import default_table_paths
 from .report import summary_to_dict, table_to_dict
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
-DEFAULT_PRICES = "prices/anthropic.json"  # comma-separate several tables to merge vendors
+DEFAULT_PRICES = ""  # empty: the Anthropic and OpenAI tables shipped with the tool; or comma-separated paths
 
 
 def _price_paths(prices: str) -> list[str]:
-    return [p.strip() for p in prices.split(",") if p.strip()]
+    return [p.strip() for p in prices.split(",") if p.strip()] or default_table_paths()
 
 
 def tool_report(

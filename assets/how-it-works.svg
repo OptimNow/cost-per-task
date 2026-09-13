@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 290" width="900" height="290" role="img" aria-labelledby="t d">
+  <title id="t">How cost-per-task works</title>
+  <desc id="d">Token usage comes in from Claude Code and Cowork transcripts, from any agent through the local proxy, or from Langfuse and LiteLLM exports. It is priced from dated tables and grouped into attempts and tasks with your pass or fail labels. Out come cost per attempt, cost per solved task with intervals, and risk-adjusted cost with a disclosure checklist.</desc>
+  <style>
+    .head { font: 700 16px Manrope, Segoe UI, Arial, Helvetica, sans-serif; fill: #2C2C2C; letter-spacing: 0.4px; }
+    .main { font: 700 17px Manrope, Segoe UI, Arial, Helvetica, sans-serif; fill: #2C2C2C; }
+    .sub  { font: 400 14px Almarai, Segoe UI, Arial, Helvetica, sans-serif; fill: #2C2C2C; }
+    .num  { font: 700 13px Manrope, Segoe UI, Arial, Helvetica, sans-serif; fill: #2C2C2C; }
+  </style>
+
+  <!-- card -->
+  <rect x="1" y="1" width="898" height="288" rx="18" fill="#F4F4F4" stroke="#C1C1C1" stroke-width="2"/>
+
+  <!-- step headers -->
+  <circle cx="44" cy="38" r="12" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+  <text class="num" x="44" y="43" text-anchor="middle">1</text>
+  <text class="head" x="64" y="44">TOKEN USAGE IN</text>
+  <circle cx="339" cy="38" r="12" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+  <text class="num" x="339" y="43" text-anchor="middle">2</text>
+  <text class="head" x="359" y="44">PRICED AND GROUPED</text>
+  <circle cx="634" cy="38" r="12" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+  <text class="num" x="634" y="43" text-anchor="middle">3</text>
+  <text class="head" x="654" y="44">WHAT YOU GET</text>
+
+  <!-- panels -->
+  <rect x="30" y="62" width="250" height="204" rx="14" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+  <rect x="325" y="62" width="250" height="204" rx="14" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+  <rect x="620" y="62" width="250" height="204" rx="14" fill="#FFFFFF" stroke="#2C2C2C" stroke-width="2"/>
+
+  <!-- arrows -->
+  <line x1="286" y1="164" x2="313" y2="164" stroke="#2C2C2C" stroke-width="3"/>
+  <polygon points="319,164 309,158 309,170" fill="#2C2C2C"/>
+  <line x1="581" y1="164" x2="608" y2="164" stroke="#2C2C2C" stroke-width="3"/>
+  <polygon points="614,164 604,158 604,170" fill="#2C2C2C"/>
+
+  <!-- panel 1: sources -->
+  <text class="main" x="50" y="102">Claude Code and Cowork</text>
+  <text class="sub"  x="50" y="123">transcripts already on disk</text>
+  <line x1="50" y1="141" x2="260" y2="141" stroke="#C1C1C1" stroke-width="1.5"/>
+  <text class="main" x="50" y="167">Any agent</text>
+  <text class="sub"  x="50" y="188">through the local proxy</text>
+  <line x1="50" y1="206" x2="260" y2="206" stroke="#C1C1C1" stroke-width="1.5"/>
+  <text class="main" x="50" y="232">Langfuse or LiteLLM</text>
+  <text class="sub"  x="50" y="253">usage exports</text>
+
+  <!-- panel 2: processing -->
+  <text class="main" x="345" y="102">Vendor token counts</text>
+  <text class="sub"  x="345" y="123">counted, never estimated</text>
+  <line x1="345" y1="141" x2="555" y2="141" stroke="#C1C1C1" stroke-width="1.5"/>
+  <text class="main" x="345" y="167">Dated price tables</text>
+  <text class="sub"  x="345" y="188">per model and token class</text>
+  <line x1="345" y1="206" x2="555" y2="206" stroke="#C1C1C1" stroke-width="1.5"/>
+  <text class="main" x="345" y="232">Attempts and tasks</text>
+  <text class="sub"  x="345" y="253">with your pass or fail labels</text>
+
+  <!-- panel 3: outputs; the one green accent marks the headline figure -->
+  <text class="main" x="640" y="102">Cost per attempt</text>
+  <text class="sub"  x="640" y="123">mean and P90</text>
+  <line x1="640" y1="141" x2="850" y2="141" stroke="#C1C1C1" stroke-width="1.5"/>
+  <rect x="632" y="148" width="210" height="28" rx="14" fill="#ACE849"/>
+  <text class="main" x="645" y="167">Cost per solved task</text>
+  <text class="sub"  x="640" y="188">with 95% intervals</text>
+  <line x1="640" y1="206" x2="850" y2="206" stroke="#C1C1C1" stroke-width="1.5"/>
+  <text class="main" x="640" y="232">Risk-adjusted cost</text>
+  <text class="sub"  x="640" y="253">and a disclosure checklist</text>
+</svg>

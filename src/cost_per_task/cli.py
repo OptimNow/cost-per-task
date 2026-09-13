@@ -40,7 +40,7 @@ from .importers.claude_sessions import (
 from .importers.common import ImportError_
 from .labels import Label, LabelError, append_label, import_csv, load_labels
 from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
-from .pricing import PricingError, PricingTable
+from .pricing import PricingError, PricingTable, default_table_paths
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
 from .report import render_comparison, render_json, render_report
 from .schema import JsonlWriter, read_jsonl
@@ -84,7 +84,9 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--labels", default=DEFAULT_LABELS)
     parser.add_argument(
-        "--prices", action="append", required=True, help="pricing table JSON; repeat to merge vendors"
+        "--prices",
+        action="append",
+        help="pricing table JSON; repeat to merge vendors (default: the Anthropic and OpenAI tables shipped with the tool)",
     )
     parser.add_argument("--cleanup-cost", type=float, help="K: cost of one leaked failure")
     parser.add_argument("--leak-rate", type=float, help="override L instead of using leak labels")
@@ -317,7 +319,7 @@ def _analysis(args: argparse.Namespace, *, by_task_type: bool):
         return load_analysis(
             log=args.log,
             labels=args.labels,
-            prices=args.prices,
+            prices=args.prices or default_table_paths(),
             by_task_type=by_task_type,
             task_type=args.task_type,
             k=args.k,
@@ -432,13 +434,8 @@ def _cmd_prices(args: argparse.Namespace) -> int:
 
 
 def _default_price_paths() -> list[str]:
-    """prices/anthropic.json in the current folder, else the copy shipped inside
-    the package, else the repository an editable install points at."""
-    here = Path(__file__).resolve()
-    for candidate in (Path(DEFAULT_PRICES), here.parent / DEFAULT_PRICES, here.parents[2] / DEFAULT_PRICES):
-        if candidate.exists():
-            return [str(candidate)]
-    return []
+    """The shipped Anthropic table, for pricing Claude Code and Cowork sessions."""
+    return default_table_paths(("anthropic.json",))
 
 
 def _session_roots(args: argparse.Namespace):

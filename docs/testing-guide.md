@@ -33,10 +33,10 @@ attempt. You see the real figure after the first model, before paying for the se
 
 ## Setup (once, about ten minutes)
 
-1. **Install the tool** from the repository folder, in PowerShell:
+1. **Install the tool** from the folder where you cloned the repository, in PowerShell:
 
    ```powershell
-   cd C:\Users\jlati\Documents\GitHub\cost-per-task
+   cd path\to\cost-per-task
    python -m pip install -e .
    ```
 
