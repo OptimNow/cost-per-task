@@ -42,6 +42,7 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 ## Workflow and releases
 
 - Work on a branch and open a pull request; CI (`ci.yml`) must be green before merging to `main`. Do not push to `main` directly.
+- Stacked pull requests: once a base pull request merges, retarget the next one to `main` before merging it, or merge from the top of the stack down. Otherwise its changes land on the intermediate branch and never reach `main`, as happened with #2 and #3 in September 2026.
 - Release: bump `version` in `pyproject.toml` and `__version__` in `src/cost_per_task/__init__.py` (minor digit for features), move the `[Unreleased]` entries in `CHANGELOG.md` under the new version, merge, then `git tag vX.Y.Z` on `main` and push the tag. `publish-pypi.yml` tests the tagged commit, builds, publishes through PyPI trusted publishing (GitHub environment `pypi`, no stored token) and creates the GitHub Release. Re-publish an existing tag with `gh workflow run publish-pypi.yml -f tag=vX.Y.Z`.
 - One-time setup owned by the repository owner: the PyPI pending publisher for `cost-per-task` (owner OptimNow, repo cost-per-task, workflow `publish-pypi.yml`, environment `pypi`) and the GitHub environment `pypi`.
 
