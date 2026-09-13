@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cost-per-task"
-version = "0.4.0"
+version = "0.5.0"
 description = "Measure the real cost per completed task of LLM agents: capture token usage per API call, group into attempts and tasks, price them, and report cost per solved task."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "OptimNow", email = "j.latiere@gmail.com" }]
+authors = [{ name = "OptimNow", email = "jean@optimnow.io" }]
 keywords = ["finops", "llm", "agents", "cost", "tokens", "cost-per-task"]
 classifiers = [
     "Development Status :: 3 - Alpha",
