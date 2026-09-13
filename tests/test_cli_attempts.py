@@ -9,7 +9,7 @@ from cost_per_task.schema import StepRecord
 def test_attempt_ids_are_unique_within_one_second():
     ids = {cli._new_attempt_id() for _ in range(200)}
     assert len(ids) == 200
-    assert all(re.fullmatch(r"a\d{8}T\d{6}Z-[0-9a-f]{4}", i) for i in ids)
+    assert all(re.fullmatch(r"a\d{8}T\d{6}Z-[0-9a-f]{8}", i) for i in ids)
 
 
 def _rec(task: str, attempt: str) -> StepRecord:

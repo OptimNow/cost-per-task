@@ -34,7 +34,7 @@ foreach ($task in $tasks) {
         $total++
         # The script names each attempt, so the label always lands on this
         # attempt and never on an earlier one.
-        $attemptId = "a" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'") + "-" + ("{0:x4}" -f (Get-Random -Maximum 65536))
+        $attemptId = "a" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'") + "-" + ("{0:x8}" -f (Get-Random -Maximum 2147483647))
         Write-Host ""
         Write-Host "== $($task.Id) attempt $i of $Attempts on $Model" -ForegroundColor Cyan
         python -m cost_per_task.cli run --task-id $task.Id --attempt-id $attemptId --task-type simple --log $Log -- `
