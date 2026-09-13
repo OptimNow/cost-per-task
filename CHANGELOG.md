@@ -21,6 +21,9 @@ versioning, with the minor digit bumped for any user-visible feature.
   cap per attempt, and both level scripts label each attempt by its explicit id.
 
 ### Changed
+- `--prices` is optional on `cpt report` and `cpt compare` and in the MCP tools: the Anthropic
+  and OpenAI tables shipped with the tool apply by default.
+- README redesigned for the public repository, with a diagram of how the tool works.
 - Attempt id suffixes are 8 hex digits: the 4 digits in 0.4.0 could collide when many attempts
   start in the same second, which would merge them into one.
 - The report's attempt column is wide enough for the full ids.
