@@ -29,12 +29,23 @@ pip install cost-per-task
 Python 3.11 or later, no runtime dependencies, dated price tables included. Then pick the way
 in that matches how you work:
 
-| Your situation | What to run |
-|---|---|
-| <img src="https://img.shields.io/badge/-Claude%20Code%20%26%20Cowork-D97757?logo=anthropic&logoColor=white" alt="Claude Code and Cowork" height="22"/> | `cpt sessions list`, fill in the sheet it writes, then `cpt sessions import`. Measures the sessions already on your computer from their transcripts, with no proxy, no API key and no extra spend. [Guide](docs/claude-sessions.md) |
-| <img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/> | `cpt run --task-id issue-142 -- <the command that starts your agent>`. A local proxy records every Anthropic, OpenAI or OpenRouter call the agent makes, streaming included, with no change to the agent. |
-| <img src="https://img.shields.io/badge/-Langfuse%20%2F%20LiteLLM-555555" alt="Langfuse or LiteLLM" height="22"/> | `cpt import langfuse observations.json` or `cpt import litellm spend_logs.jsonl`, to reuse usage you already log. |
-| <img src="https://img.shields.io/badge/-MCP%20server-7C3AED" alt="MCP server" height="22"/> | `pip install "cost-per-task[mcp]"`, then `cpt mcp`, so an AI assistant or the OptimNow AI ROI Calculator can read the report. |
+<img src="https://img.shields.io/badge/-Claude%20Code%20%26%20Cowork-D97757?logo=anthropic&logoColor=white" alt="Claude Code and Cowork" height="22"/><br>
+`cpt sessions list`, fill in the sheet it writes, then `cpt sessions import`. Measures the
+sessions already on your computer from their transcripts, with no proxy, no API key and no
+extra spend. [Guide](docs/claude-sessions.md)
+
+<img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
+`cpt run --task-id issue-142 -- <the command that starts your agent>`. A local proxy records
+every Anthropic, OpenAI or OpenRouter call the agent makes, streaming included, with no change
+to the agent.
+
+<img src="https://img.shields.io/badge/-Langfuse%20%2F%20LiteLLM-555555" alt="Langfuse or LiteLLM" height="22"/><br>
+`cpt import langfuse observations.json` or `cpt import litellm spend_logs.jsonl`, to reuse
+usage you already log.
+
+<img src="https://img.shields.io/badge/-MCP%20server-7C3AED" alt="MCP server" height="22"/><br>
+`pip install "cost-per-task[mcp]"`, then `cpt mcp`, so an AI assistant or the OptimNow AI ROI
+Calculator can read the report.
 
 Every way in ends the same way: label the outcomes, then read the report.
 
