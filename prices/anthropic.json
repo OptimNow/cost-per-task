@@ -1,7 +1,7 @@
 {
   "currency": "USD",
-  "as_of": "2026-09-02",
-  "source": "OptimNow AI Pricing Hub (priced 2026-09-02) cross-checked against the platform.claude.com/docs prompt caching pricing table on 2026-09-02; cache writes are 1.25x (5m) and 2x (1h) of base input; Claude Fable 5.1 cache reads are a documented special rate of 0.025x input",
+  "as_of": "2026-09-13",
+  "source": "OptimNow AI Pricing Hub (catalogue 2026-09-13) cross-checked against the platform.claude.com/docs prompt caching pricing table: Fable 5 and 5.1, Opus 5, Sonnet 5 and Haiku 4.5 on 2026-09-02, Opus 4.5 to 4.8 and Sonnet 4.5 and 4.6 on 2026-09-13; cache writes are 1.25x (5m) and 2x (1h) of base input; Claude Fable 5.1 cache reads are a documented special rate of 0.025x input",
   "models": {
     "claude-fable-5-1": {
       "input_per_mtok": 10.0,
@@ -41,6 +41,54 @@
       "cache_write_5m_per_mtok": 1.25,
       "cache_write_1h_per_mtok": 2.0,
       "output_per_mtok": 5.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-opus-4-8": {
+      "input_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.5,
+      "cache_write_5m_per_mtok": 6.25,
+      "cache_write_1h_per_mtok": 10.0,
+      "output_per_mtok": 25.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-opus-4-7": {
+      "input_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.5,
+      "cache_write_5m_per_mtok": 6.25,
+      "cache_write_1h_per_mtok": 10.0,
+      "output_per_mtok": 25.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-opus-4-6": {
+      "input_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.5,
+      "cache_write_5m_per_mtok": 6.25,
+      "cache_write_1h_per_mtok": 10.0,
+      "output_per_mtok": 25.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-opus-4-5": {
+      "input_per_mtok": 5.0,
+      "cache_read_per_mtok": 0.5,
+      "cache_write_5m_per_mtok": 6.25,
+      "cache_write_1h_per_mtok": 10.0,
+      "output_per_mtok": 25.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-sonnet-4-6": {
+      "input_per_mtok": 3.0,
+      "cache_read_per_mtok": 0.3,
+      "cache_write_5m_per_mtok": 3.75,
+      "cache_write_1h_per_mtok": 6.0,
+      "output_per_mtok": 15.0,
+      "reasoning_per_mtok": null
+    },
+    "claude-sonnet-4-5": {
+      "input_per_mtok": 3.0,
+      "cache_read_per_mtok": 0.3,
+      "cache_write_5m_per_mtok": 3.75,
+      "cache_write_1h_per_mtok": 6.0,
+      "output_per_mtok": 15.0,
       "reasoning_per_mtok": null
     }
   }
