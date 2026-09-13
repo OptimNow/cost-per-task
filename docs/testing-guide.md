@@ -201,6 +201,10 @@ mechanism working on a real agent; it cannot crown a winner. That is Level 3's j
 
 ## Level 3: a realistic comparison on your own work
 
+If your real work already runs in Claude Code or Cowork, you do not need the proxy
+or an API key for this level: [claude-sessions.md](claude-sessions.md) measures the
+sessions already on your computer, and the protocol below applies unchanged.
+
 Levels 1 and 2 prove the tool. Level 3 produces a number you could put in front of
 a client. The paper's protocol, applied:
 
