@@ -7,6 +7,12 @@ versioning, with the minor digit bumped for any user-visible feature.
 ## [Unreleased]
 
 ### Added
+- `cpt sessions list` and `cpt sessions import`: measure Claude Code (desktop and CLI) and Cowork
+  sessions from the transcripts they keep on disk, labelled in a spreadsheet that Excel can edit
+  in any locale; subscription use is priced as a shadow cost at API list prices. Guide in
+  `docs/claude-sessions.md`.
+- Prices for Claude Opus 4.5 to 4.8 and Sonnet 4.5 and 4.6, checked against Anthropic's pricing
+  table on 2026-09-13.
 - The proxy records the effort level each request asked for (Anthropic `output_config.effort`,
   OpenAI `reasoning_effort` or `reasoning.effort`); the disclosure checklist shows it.
 - Level 2 of the testing guide runs Claude Code in bare mode with a pinned effort and a spending
