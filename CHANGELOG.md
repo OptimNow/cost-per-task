@@ -6,6 +6,8 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-13
+
 ### Added
 - `cpt sessions list` and `cpt sessions import`: measure Claude Code (desktop and CLI) and Cowork
   sessions from the transcripts they keep on disk, labelled in a spreadsheet that Excel can edit
@@ -21,6 +23,7 @@ versioning, with the minor digit bumped for any user-visible feature.
   cap per attempt, and both level scripts label each attempt by its explicit id.
 
 ### Changed
+- The package metadata names jean@optimnow.io as the author contact.
 - `--prices` is optional on `cpt report` and `cpt compare` and in the MCP tools: the Anthropic
   and OpenAI tables shipped with the tool apply by default.
 - README redesigned for the public repository, with a diagram of how the tool works.
@@ -95,7 +98,8 @@ Published to PyPI and as a GitHub Release on 2026-09-12, from commit 85d465e (ta
   the Anthropic price list.
 - `cpt run`, `cpt serve`, `cpt report`.
 
-[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.5.0
 [0.4.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.4.0
 [0.3.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.3.0
 [0.2.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.2.0

@@ -43,8 +43,8 @@ cpt label pass --task issue-142
 cpt report --cleanup-cost 25
 ```
 
-`cpt sessions` and the bundled price tables arrive with version 0.5.0. Until that release is
-on PyPI, install from a copy of this repository with `pip install -e .`. For a first run,
+`cpt sessions` and the bundled price tables need version 0.5.0 or later. To work from a copy
+of this repository instead, run `pip install -e .` in its folder. For a first run,
 the [testing guide](docs/testing-guide.md) compares two models step by step and explains
 every line of the report.
 
@@ -322,7 +322,7 @@ cost-per-task/
 
 ## Status
 
-Version 0.4.0 is on PyPI, and `main` holds the work for 0.5.0. What has been checked, and how:
+Version 0.5.0 is on PyPI. What has been checked, and how:
 
 | Part | How it was checked |
 |---|---|

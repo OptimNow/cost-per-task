@@ -49,5 +49,5 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 ## Roadmap
 
 Phases 1 to 3 shipped (0.3.0), OpenRouter and OpenAI-compatible gateways in 0.4.0: capture for both providers, labelling, statistics, CPT_solved / CPT_risk / K*, disclosure checklist, importers, Pricing Hub refresh, JSON output, MCP server, provider-reported cost reconciliation.
-Changes since 0.4.0 are listed under `[Unreleased]` in CHANGELOG.md. The Anthropic path is validated live (Claude Code on Haiku, Level 1 of the testing guide on Fable 5 and 5.1).
+0.5.0 (2026-09-13) added the Claude Code and Cowork sessions importer, effort capture, price tables inside the package and `--prices` defaults. Changes since 0.5.0 are listed under `[Unreleased]` in CHANGELOG.md. The Anthropic path is validated live (Claude Code on Haiku, Level 1 of the testing guide on Fable 5 and 5.1).
 Next: live OpenAI and OpenRouter runs, importers checked on real exports, further providers (Bedrock, Vertex, xAI), long-context price tiers, PyPI release and public repo (apply the OptimNow public-repo hardening standard first).
