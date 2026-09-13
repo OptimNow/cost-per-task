@@ -34,14 +34,15 @@ follow the same application conventions but have not been checked on a Mac yet.
 
 ## Before you start
 
-Install cost-per-task once: clone the repository, then run this in its folder.
+Install cost-per-task once. From a copy of the repository, run this in its folder:
 
 ```
 python -m pip install -e .
 ```
 
-Run the commands below from the repository folder, or from any folder you like
-once installed; the price table is found either way.
+Once a release that includes `cpt sessions` is on PyPI, `python -m pip install cost-per-task`
+works too and brings the price tables with it. Either way, the commands below run from
+any folder.
 
 ## Step 1: list your sessions
 

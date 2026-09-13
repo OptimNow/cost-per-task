@@ -432,9 +432,10 @@ def _cmd_prices(args: argparse.Namespace) -> int:
 
 
 def _default_price_paths() -> list[str]:
-    """prices/anthropic.json in the current folder, else in the repository
-    this package was installed from (an editable install), else nothing."""
-    for candidate in (Path(DEFAULT_PRICES), Path(__file__).resolve().parents[2] / DEFAULT_PRICES):
+    """prices/anthropic.json in the current folder, else the copy shipped inside
+    the package, else the repository an editable install points at."""
+    here = Path(__file__).resolve()
+    for candidate in (Path(DEFAULT_PRICES), here.parent / DEFAULT_PRICES, here.parents[2] / DEFAULT_PRICES):
         if candidate.exists():
             return [str(candidate)]
     return []
