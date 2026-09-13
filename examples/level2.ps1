@@ -44,7 +44,7 @@ $tasks = Get-ChildItem -Path $taskRoot -Directory
 foreach ($task in $tasks) {
     $prompt = Get-Content -Raw (Join-Path $task.FullName "TASK.md")
     for ($i = 1; $i -le $Attempts; $i++) {
-        $attemptId = "a" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'") + "-" + ("{0:x4}" -f (Get-Random -Maximum 65536))
+        $attemptId = "a" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'") + "-" + ("{0:x8}" -f (Get-Random -Maximum 2147483647))
         $work = Join-Path $Scratch "$($task.Name)-$Model-$i"
         if (Test-Path $work) { Remove-Item -Recurse -Force $work }
         New-Item -ItemType Directory -Path $work | Out-Null

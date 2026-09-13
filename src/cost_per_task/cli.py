@@ -42,7 +42,7 @@ def _new_attempt_id() -> str:
     # Timestamp for readability, random suffix so two attempts started in the
     # same second never share an id (which would merge them into one attempt).
     stamp = datetime.now(timezone.utc).strftime("a%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{secrets.token_hex(2)}"
+    return f"{stamp}-{secrets.token_hex(4)}"
 
 
 def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
