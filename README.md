@@ -289,7 +289,7 @@ cost-per-task/
 ├── LICENSE                   <- MIT
 ├── CHANGELOG.md              <- Release notes
 ├── CLAUDE.md                 <- Project context and hard rules for AI assistants
-├── assets/                   <- Diagrams used in this README
+├── assets/                   <- The README diagram and the social preview image
 ├── docs/                     <- Testing guide, Claude Code and Cowork guide
 ├── examples/                 <- Scripts and tasks used by the testing guide
 ├── prices/                   <- Dated price tables, shipped inside the package too
