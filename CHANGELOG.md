@@ -9,19 +9,17 @@ versioning, with the minor digit bumped for any user-visible feature.
 ### Added
 - The proxy records the effort level each request asked for (Anthropic `output_config.effort`,
   OpenAI `reasoning_effort` or `reasoning.effort`); the disclosure checklist shows it.
-- Testing guide (`docs/testing-guide.md`) with Level 1 and Level 2 scripts comparing two models,
-  and `claude-fable-5-1` in `prices/anthropic.json`.
+- Level 2 of the testing guide runs Claude Code in bare mode with a pinned effort and a spending
+  cap per attempt, and both level scripts label each attempt by its explicit id.
 
 ### Changed
-- Attempt ids carry a random suffix so attempts started in the same second never merge;
-  `cpt label` without `--attempt` picks the task's last attempt in log order.
-- The report's attempt column is wide enough for the new ids.
+- Attempt id suffixes are 8 hex digits: the 4 digits in 0.4.0 could collide when many attempts
+  start in the same second, which would merge them into one.
+- The report's attempt column is wide enough for the full ids.
 
-### Infrastructure
-- Release pipeline: tag `vX.Y.Z` on `main` to test, build, publish to PyPI via
-  trusted publishing and create the GitHub Release.
+## [0.4.0] - 2026-09-12
 
-## [0.4.0] - 2026-09-02
+Published to PyPI and as a GitHub Release on 2026-09-12, from commit 85d465e (tag `v0.4.0`).
 
 ### Added
 - OpenRouter and other OpenAI-compatible gateways as the `openai` upstream, with a
@@ -34,6 +32,16 @@ versioning, with the minor digit bumped for any user-visible feature.
 - `--prices` may be repeated to merge vendor tables; the merged `as_of` is the oldest.
 - The log's `provider` field names the gateway host when a call did not go to the
   vendor directly.
+- Testing guide (`docs/testing-guide.md`) with Level 1 and Level 2 scripts comparing two
+  models, and `claude-fable-5-1` in `prices/anthropic.json`.
+
+### Changed
+- Attempt ids carry a random suffix so attempts started in the same second never merge;
+  `cpt label` without `--attempt` picks the task's last attempt in log order.
+
+### Infrastructure
+- Release pipeline: tag `vX.Y.Z` on `main` to test, build, publish to PyPI via
+  trusted publishing and create the GitHub Release.
 
 ## [0.3.0] - 2026-09-02
 
