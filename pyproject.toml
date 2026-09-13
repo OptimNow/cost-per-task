@@ -39,6 +39,10 @@ dev = ["pytest>=8"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/cost_per_task"]
 
+# The dated price tables travel with the package, so a pip install can price.
+[tool.hatch.build.targets.wheel.force-include]
+"prices" = "cost_per_task/prices"
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

@@ -6,10 +6,28 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
-- Release pipeline: tag `vX.Y.Z` on `main` to test, build, publish to PyPI via
-  trusted publishing and create the GitHub Release.
+### Added
+- `cpt sessions list` and `cpt sessions import`: measure Claude Code (desktop and CLI) and Cowork
+  sessions from the transcripts they keep on disk, labelled in a spreadsheet that Excel can edit
+  in any locale; subscription use is priced as a shadow cost at API list prices. Guide in
+  `docs/claude-sessions.md`.
+- Prices for Claude Opus 4.5 to 4.8 and Sonnet 4.5 and 4.6, checked against the Anthropic
+  pricing table on 2026-09-13.
+- The price tables ship inside the package, so a `pip install` can price sessions without a
+  copy of the repository.
+- The proxy records the effort level each request asked for (Anthropic `output_config.effort`,
+  OpenAI `reasoning_effort` or `reasoning.effort`); the disclosure checklist shows it.
+- Level 2 of the testing guide runs Claude Code in bare mode with a pinned effort and a spending
+  cap per attempt, and both level scripts label each attempt by its explicit id.
 
-## [0.4.0] - 2026-09-02
+### Changed
+- Attempt id suffixes are 8 hex digits: the 4 digits in 0.4.0 could collide when many attempts
+  start in the same second, which would merge them into one.
+- The report's attempt column is wide enough for the full ids.
+
+## [0.4.0] - 2026-09-12
+
+Published to PyPI and as a GitHub Release on 2026-09-12, from commit 85d465e (tag `v0.4.0`).
 
 ### Added
 - OpenRouter and other OpenAI-compatible gateways as the `openai` upstream, with a
@@ -22,6 +40,16 @@ versioning, with the minor digit bumped for any user-visible feature.
 - `--prices` may be repeated to merge vendor tables; the merged `as_of` is the oldest.
 - The log's `provider` field names the gateway host when a call did not go to the
   vendor directly.
+- Testing guide (`docs/testing-guide.md`) with Level 1 and Level 2 scripts comparing two
+  models, and `claude-fable-5-1` in `prices/anthropic.json`.
+
+### Changed
+- Attempt ids carry a random suffix so attempts started in the same second never merge;
+  `cpt label` without `--attempt` picks the task's last attempt in log order.
+
+### Infrastructure
+- Release pipeline: tag `vX.Y.Z` on `main` to test, build, publish to PyPI via
+  trusted publishing and create the GitHub Release.
 
 ## [0.3.0] - 2026-09-02
 

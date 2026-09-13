@@ -8,6 +8,7 @@ Commands:
   cpt compare  two-model comparison with the break-even cleanup cost K*
   cpt import   convert a Langfuse or LiteLLM usage export into a cpt log
   cpt prices   refresh a pricing table from the OptimNow AI Pricing Hub
+  cpt sessions list and import Claude Code and Cowork sessions from their transcripts
   cpt mcp      serve the report over MCP (needs the [mcp] extra)
 """
 
@@ -16,29 +17,47 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .analysis import load_analysis, pick_model
 from .importers import import_langfuse, import_litellm
+from .importers.claude_sessions import (
+    WARNING_TEXT,
+    default_roots,
+    discover_sessions,
+    harness_summary,
+    import_sheet,
+    read_sheet,
+    roots_for_paths,
+    write_sheet,
+)
 from .importers.common import ImportError_
 from .labels import Label, LabelError, append_label, import_csv, load_labels
 from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
-from .pricing import PricingError
+from .pricing import PricingError, PricingTable
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
 from .report import render_comparison, render_json, render_report
 from .schema import JsonlWriter, read_jsonl
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
+DEFAULT_SHEET = "sessions.csv"
+DEFAULT_SESSIONS_LOG = "sessions-log.jsonl"
+DEFAULT_SESSIONS_LABELS = "sessions-labels.jsonl"
+DEFAULT_PRICES = "prices/anthropic.json"
 
 
 def _new_attempt_id() -> str:
-    return datetime.now(timezone.utc).strftime("a%Y%m%dT%H%M%SZ")
+    # Timestamp for readability, random suffix so two attempts started in the
+    # same second never share an id (which would merge them into one attempt).
+    stamp = datetime.now(timezone.utc).strftime("a%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{secrets.token_hex(4)}"
 
 
 def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
@@ -141,6 +160,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     refresh.add_argument("--write", action="store_true", help="write the table (default: diff only)")
 
+    sessions = sub.add_parser(
+        "sessions", help="measure Claude Code and Cowork sessions from their transcripts"
+    )
+    sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
+    s_list = sessions_sub.add_parser("list", help="write a labelling sheet of your sessions")
+    s_list.add_argument("--out", default=DEFAULT_SHEET, help="sheet to write or refresh")
+    s_list.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
+    s_list.add_argument("--prices", action="append", help="pricing table(s) for the cost column")
+    s_list.add_argument("--no-titles", action="store_true", help="leave session titles out of the sheet")
+    s_import = sessions_sub.add_parser("import", help="import the sessions you gave a task, with labels")
+    s_import.add_argument("sheet", nargs="?", default=DEFAULT_SHEET)
+    s_import.add_argument("--log", default=DEFAULT_SESSIONS_LOG)
+    s_import.add_argument("--labels", default=DEFAULT_SESSIONS_LABELS)
+    for sp in (s_list, s_import):
+        sp.add_argument("--source", choices=("all", "code", "cowork"), default="all",
+                        help="Claude Code transcripts, Cowork sessions, or both")
+        sp.add_argument("--path", action="append", default=[],
+                        help="scan this folder instead of the default locations (repeatable)")
+
     sub.add_parser("mcp", help="serve the report over MCP on stdio")
 
     args = parser.parse_args(argv)
@@ -151,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         "report": _cmd_report,
         "compare": _cmd_compare,
         "import": _cmd_import,
+        "sessions": _cmd_sessions,
         "prices": _cmd_prices,
         "mcp": _cmd_mcp,
     }
@@ -231,11 +270,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _latest_attempt(records, task_id: str | None) -> tuple[str, str] | None:
-    candidates = [r for r in records if task_id is None or r.task_id == task_id]
-    if not candidates:
-        return None
-    latest = max(candidates, key=lambda r: (r.timestamp, r.attempt_id))
-    return latest.task_id, latest.attempt_id
+    # The log is append-only, so the last matching line is the latest attempt;
+    # timestamps have one-second resolution and cannot break ties.
+    for record in reversed(records):
+        if task_id is None or record.task_id == task_id:
+            return record.task_id, record.attempt_id
+    return None
 
 
 def _cmd_label(args: argparse.Namespace) -> int:
@@ -388,6 +428,136 @@ def _cmd_prices(args: argparse.Namespace) -> int:
         print(f"wrote {out}")
     elif changes or existing is None:
         print("dry run; pass --write to update the table")
+    return 0
+
+
+def _default_price_paths() -> list[str]:
+    """prices/anthropic.json in the current folder, else the copy shipped inside
+    the package, else the repository an editable install points at."""
+    here = Path(__file__).resolve()
+    for candidate in (Path(DEFAULT_PRICES), here.parent / DEFAULT_PRICES, here.parents[2] / DEFAULT_PRICES):
+        if candidate.exists():
+            return [str(candidate)]
+    return []
+
+
+def _session_roots(args: argparse.Namespace):
+    if args.path:
+        return roots_for_paths(args.path)
+    roots = default_roots()
+    return roots if args.source == "all" else [r for r in roots if r[0] == args.source]
+
+
+def _print_session_warnings(stats) -> None:
+    for key, text in WARNING_TEXT.items():
+        if stats.get(key):
+            print(f"cpt sessions: warning: {stats[key]} {text}", file=sys.stderr)
+
+
+def _cmd_sessions(args: argparse.Namespace) -> int:
+    if args.sessions_command == "list":
+        return _cmd_sessions_list(args)
+    return _cmd_sessions_import(args)
+
+
+def _cmd_sessions_list(args: argparse.Namespace) -> int:
+    try:
+        since = date.fromisoformat(args.since) if args.since else None
+    except ValueError:
+        print(f"cpt sessions: --since expects YYYY-MM-DD, got '{args.since}'", file=sys.stderr)
+        return 2
+    roots = _session_roots(args)
+    sessions, stats = discover_sessions(roots, since=since, include_titles=not args.no_titles)
+    price_paths = args.prices or _default_price_paths()
+    table = None
+    if price_paths:
+        try:
+            table = PricingTable.load_many(price_paths)
+        except (OSError, PricingError) as exc:
+            print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
+            return 1
+    out = Path(args.out)
+    try:
+        existing = {r["session_id"]: r for r in read_sheet(out)} if out.exists() else {}
+        written, kept = write_sheet(out, sessions, table=table, existing=existing)
+    except PermissionError:
+        print(f"cpt sessions: cannot write {out}; close it in Excel and run again", file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        print(f"cpt sessions: {exc}", file=sys.stderr)
+        return 1
+
+    scanned = [str(root) for _, root in roots if root.is_dir()]
+    print(f"cpt sessions: {len(sessions)} sessions with model calls, read from {stats['files']} transcripts in:")
+    for folder in scanned or ["(none of the folders exist; use --path)"]:
+        print(f"  {folder}")
+    by_product: dict[str, int] = {}
+    for session in sessions.values():
+        by_product[session.product] = by_product.get(session.product, 0) + 1
+    for product, count in sorted(by_product.items()):
+        print(f"  {product}: {count}")
+    if table is not None:
+        total = sum(s.cost(table)[0] for s in sessions.values())
+        unpriced = sorted({m for s in sessions.values() for m in s.models() if table.rates_for(m) is None})
+        print(f"cost column: {total:.2f} {table.currency} in total at API list prices as of {table.as_of}.")
+        print("  On a subscription you are not billed per token: this is a shadow cost.")
+        if unpriced:
+            print(f"  No price for {', '.join(unpriced)}; those calls count as zero.")
+    else:
+        print("cost column left empty: no pricing table found (pass --prices).")
+    _print_session_warnings(stats)
+    print(f"wrote {out}: {written} rows, {kept} with your entries kept.")
+    print("Next: open it in Excel, fill task (same name for sessions that did the same job), task_type,")
+    print("outcome (pass or fail) and leaked (yes or no) for the sessions to measure, save, then run:")
+    print(f"  python -m cost_per_task.cli sessions import {out}")
+    return 0
+
+
+def _cmd_sessions_import(args: argparse.Namespace) -> int:
+    try:
+        rows = read_sheet(args.sheet)
+    except (OSError, ValueError) as exc:
+        print(f"cpt sessions: cannot read the sheet: {exc}", file=sys.stderr)
+        return 1
+    sessions, stats = discover_sessions(_session_roots(args), include_titles=False)
+    imported_tasks: dict[str, str] = {}
+    if Path(args.log).exists():
+        for record in read_jsonl(args.log):
+            imported_tasks.setdefault(record.attempt_id, record.task_id)
+    existing_labels = load_labels(args.labels) if Path(args.labels).exists() else {}
+    result = import_sheet(rows, sessions, imported_tasks, existing_labels)
+
+    writer = JsonlWriter(args.log)
+    for record in result.records:
+        writer.append(record)
+    for label in result.labels:
+        append_label(args.labels, label)
+
+    print(
+        f"cpt sessions: imported {len(result.imported)} sessions "
+        f"({len(result.records)} model calls) into {args.log}; "
+        f"{len(result.labels)} labels written to {args.labels}"
+    )
+    print(
+        f"  skipped: no task {result.blank}, already in the log: {result.already_imported}, "
+        f"labels unchanged {result.unchanged_labels}"
+    )
+    if result.missing:
+        print(
+            f"  {len(result.missing)} sessions in the sheet have no transcript any more: "
+            + ", ".join(result.missing[:5])
+            + (" ..." if len(result.missing) > 5 else "")
+        )
+    for problem in result.problems:
+        print(f"cpt sessions: warning: {problem}", file=sys.stderr)
+    _print_session_warnings(stats)
+    measured = [sessions[sid] for sid in imported_tasks if sid in sessions]
+    harness = harness_summary(measured) or "Claude Code"
+    print("Report:")
+    print(
+        f"  python -m cost_per_task.cli report --log {args.log} --labels {args.labels} "
+        f'--prices "{(_default_price_paths() or [DEFAULT_PRICES])[0]}" --seed 1 --harness "{harness}"'
+    )
     return 0
 
 

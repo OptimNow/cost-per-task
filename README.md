@@ -67,7 +67,7 @@ answer you accepted at the time and later found to be wrong.
 
 ```
 cpt label pass --task issue-142
-cpt label fail --task issue-142 --attempt a20260901T212657Z
+cpt label fail --task issue-142 --attempt a20260901T212657Z-3f9c2a71
 cpt label pass --leak --task issue-142
 ```
 
@@ -77,6 +77,14 @@ answer, pass it as the cleanup cost.
 ```
 cpt report --prices prices/anthropic.json --cleanup-cost 25 --harness "Claude Code 2.1"
 ```
+
+Want a guided first run? [docs/testing-guide.md](docs/testing-guide.md) compares
+two models step by step, from questions costing cents to a realistic workload, and
+explains how to read every line of the report.
+
+Already working in Claude Code or Cowork? [docs/claude-sessions.md](docs/claude-sessions.md)
+prices the sessions already on your computer from their transcripts, with no proxy and
+no API spend.
 
 ### What a report looks like
 
@@ -157,8 +165,8 @@ own token counts out of the response. Token counts are never estimated with a lo
 tokenizer; they are what the vendor billed.
 
 **What is never logged.** API keys, headers, prompts and completions. Prompts often
-contain client data and have no place in a metrics file. Only token counts, model,
-provider, task and attempt ids, tool names and latency are written. A test asserts this
+contain client data and have no place in a metrics file. Only token counts, model, provider, task and attempt ids, tool names, latency and the
+requested effort level are written. A test asserts this
 on every commit.
 
 **Labels live apart from the log.** The usage log is append-only and never rewritten;
@@ -178,6 +186,7 @@ attributed to the model carrying the largest share of the cost.
 | **OpenRouter** and other OpenAI-compatible gateways | proxy, `--openai-upstream https://openrouter.ai/api` | usage accounting requested so OpenRouter returns native counts and the cost it charged; the report reconciles that against list price. Covers Gemini, Grok, Mistral, DeepSeek and anything else the gateway routes |
 | **Langfuse** exports | `cpt import langfuse observations.json` | for teams already logging usage; session as task, trace as attempt by default |
 | **LiteLLM** spend logs | `cpt import litellm spend_logs.jsonl` | spend logs carry no cache breakdown, so imports show 0% cache hits |
+| **Claude Code and Cowork** sessions | `cpt sessions list`, then `cpt sessions import` | reads the transcripts both products keep on disk; no proxy, no API spend; subscription use shows as a shadow cost at API prices. See [docs/claude-sessions.md](docs/claude-sessions.md) |
 
 Native adapters for Bedrock, Vertex AI and xAI are on the roadmap; each is a small file,
 because the only thing that differs between vendors is the shape of the usage block.
@@ -195,6 +204,7 @@ The statistics, labels, report and comparison are model-agnostic already.
 | `cpt report --prices P [--cleanup-cost K] [--harness H] [--json]` | the report above, per model and task type; repeat `--prices` to merge vendor tables |
 | `cpt compare A B --prices P [--cleanup-cost K] [--json]` | two-model comparison with K* |
 | `cpt import langfuse\|litellm FILE [--task-field F] [--attempt-field F]` | convert an export into cpt records |
+| `cpt sessions list [--since DATE]` then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet |
 | `cpt prices refresh --provider anthropic\|openai [--write]` | diff a pricing table against the OptimNow AI Pricing Hub; write only when asked |
 | `cpt mcp` | serve the report to AI assistants over MCP (optional extra) |
 
@@ -289,7 +299,7 @@ cost-per-task/
 │   ├── stats.py                  <- Wilson, bootstrap, percentile, p_N, pass^k
 │   ├── metrics.py                <- Attempts, groups, CPT_solved, CPT_risk, K*
 │   ├── report.py                 <- Text and JSON report, disclosure checklist
-│   ├── importers/                <- Langfuse and LiteLLM
+│   ├── importers/                <- Langfuse, LiteLLM, Claude Code and Cowork sessions
 │   ├── mcp_server.py             <- MCP tools (optional extra)
 │   └── cli.py                    <- The cpt command
 └── tests/                        <- pytest; proxy tests run against fake vendor servers

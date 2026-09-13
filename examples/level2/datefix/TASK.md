@@ -1,0 +1,1 @@
+There is a bug in `days_until_due` in invoices.py: the tests in test_invoices.py fail. Find and fix the bug so that all tests pass. Run `python -m pytest -q` to check. Do not modify the tests. Stop when the tests pass.

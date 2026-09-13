@@ -7,3 +7,11 @@ build/
 venv/
 .pytest_cache/
 cpt-log.jsonl
+cpt-labels.jsonl
+level1-log.jsonl
+level1-labels.jsonl
+level2-log.jsonl
+level2-labels.jsonl
+sessions*.csv
+sessions-log.jsonl
+sessions-labels.jsonl

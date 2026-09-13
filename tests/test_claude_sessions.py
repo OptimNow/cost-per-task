@@ -1,0 +1,250 @@
+"""The Claude Code and Cowork transcript importer, on synthetic transcripts
+laid out exactly like the real folders."""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from cost_per_task import cli
+from cost_per_task.importers.claude_sessions import (
+    discover_sessions,
+    harness_summary,
+    import_sheet,
+    read_sheet,
+    roots_for_paths,
+    write_sheet,
+)
+from cost_per_task.pricing import PricingTable
+from cost_per_task.schema import read_jsonl
+
+SECRETS = ("CLIENT-SECRET-PROMPT", "SECRET-ANSWER", "TOOL-INPUT-SECRET", "Fix invoice bug")
+MODELS = ("claude-fable-5", "claude-fable-5-1", "claude-haiku-4-5", "claude-sonnet-5")
+
+# Output tokens cost 1 USD each, everything else is free: costs read as token counts.
+RATES = {
+    "input_per_mtok": 0.0,
+    "cache_read_per_mtok": 0.0,
+    "cache_write_5m_per_mtok": 0.0,
+    "cache_write_1h_per_mtok": 0.0,
+    "output_per_mtok": 1_000_000.0,
+}
+
+
+def _assistant(sid, mid, rid, model, out, ts, *, tools=(), speed="standard", entry="claude-desktop",
+               version="2.1.257", effort="xhigh", cwd="C:\\work\\proj", sidechain=False):
+    content = [{"type": "tool_use", "name": t, "input": {"cmd": "TOOL-INPUT-SECRET"}} for t in tools]
+    content = content or [{"type": "text", "text": "SECRET-ANSWER"}]
+    return {
+        "type": "assistant", "sessionId": sid, "timestamp": ts, "requestId": rid, "entrypoint": entry,
+        "cwd": cwd, "version": version, "effort": effort, "isSidechain": sidechain,
+        "message": {
+            "id": mid, "model": model, "role": "assistant", "content": content,
+            "usage": {
+                "input_tokens": 10, "output_tokens": out, "cache_read_input_tokens": 1000,
+                "cache_creation_input_tokens": 200,
+                "cache_creation": {"ephemeral_1h_input_tokens": 200, "ephemeral_5m_input_tokens": 0},
+                "speed": speed, "service_tier": "standard", "inference_geo": "not_available",
+            },
+        },
+    }
+
+
+def _write(path: Path, lines) -> None:
+    """Strings are written as raw lines, anything else as JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(line if isinstance(line, str) else json.dumps(line) for line in lines)
+    path.write_text(text + "\n", encoding="utf-8")
+
+
+def _prices(path: Path) -> Path:
+    path.write_text(
+        json.dumps({"currency": "USD", "as_of": "2026-09-13", "models": {m: RATES for m in MODELS}}),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def roots(tmp_path):
+    code = tmp_path / "claude" / "projects"
+    _write(code / "proj" / "S1.jsonl", [
+        {"type": "user", "sessionId": "S1", "timestamp": "2026-09-10T08:00:00.000Z",
+         "message": {"role": "user", "content": "CLIENT-SECRET-PROMPT"}},
+        {"type": "custom-title", "customTitle": "Fix invoice bug", "sessionId": "S1"},
+        # one response written on two lines: the output count grows, tools differ per line
+        _assistant("S1", "m1", "r1", "claude-fable-5", 5, "2026-09-10T08:00:05.000Z", tools=["Read"]),
+        _assistant("S1", "m1", "r1", "claude-fable-5", 120, "2026-09-10T08:00:06.000Z", tools=["Edit"]),
+        _assistant("S1", "m2", "r2", "claude-fable-5-1", 50, "2026-09-10T08:01:00.000Z", speed="fast"),
+        {"type": "assistant", "sessionId": "S1", "timestamp": "2026-09-10T08:02:00.000Z",
+         "message": {"id": "x", "model": "<synthetic>", "usage": {"output_tokens": 0}}},
+        "not json at all",
+    ])
+    _write(code / "proj" / "S1" / "subagents" / "agent-a1.jsonl", [
+        _assistant("S1", "m3", "r3", "claude-fable-5", 30, "2026-09-10T08:03:00.000Z", sidechain=True),
+    ])
+    _write(code / "proj" / "S2.jsonl", [
+        _assistant("S2", "m4", "r4", "claude-haiku-4-5", 10, "2026-08-01T09:00:00.000Z",
+                   entry="cli", version="2.1.200"),
+        # history copied from S1 on resume: must not be counted twice
+        _assistant("S2", "m1", "r1", "claude-fable-5", 120, "2026-08-01T09:00:01.000Z", entry="cli"),
+    ])
+    cowork = tmp_path / "Claude" / "local-agent-mode-sessions"
+    folder = cowork / "acct" / "org" / "local_abc"
+    _write(folder / ".claude" / "projects" / "p" / "T1.jsonl", [
+        _assistant("T1", "c1", "q1", "claude-sonnet-5", 40, "2026-09-11T10:00:00.000Z",
+                   entry="local-agent", cwd="/sessions/x/outputs"),
+    ])
+    _write(folder / ".claude" / "projects" / "p" / "T2.jsonl", [
+        _assistant("T2", "c2", "q2", "claude-sonnet-5", 60, "2026-09-11T10:05:00.000Z", entry="local-agent"),
+    ])
+    _write(folder / "audit.jsonl", [{"message": {"model": "claude-sonnet-5", "usage": {"output_tokens": 999}}}])
+    (folder / "outputs").mkdir(parents=True)
+    (folder / "outputs" / "report.docx").write_text("x", encoding="utf-8")
+    return roots_for_paths([str(code), str(cowork)])
+
+
+@pytest.fixture
+def table(tmp_path):
+    return PricingTable.load(_prices(tmp_path / "prices.json"))
+
+
+def test_discovery_dedupes_folds_subagents_and_groups_cowork(roots, table):
+    sessions, stats = discover_sessions(roots)
+    assert set(sessions) == {"S1", "S2", "local_abc"}
+    s1 = sessions["S1"]
+    assert s1.product == "Claude Code desktop"
+    assert s1.project == "proj"
+    assert s1.title == "Fix invoice bug"
+    assert len(s1.calls) == 3  # m1 once, m2, and m3 from the sub-agent
+    m1 = max(s1.calls.values(), key=lambda c: c.output_tokens)
+    assert m1.output_tokens == 120 and m1.tool_names == ["Read", "Edit"] and m1.effort == "xhigh"
+    assert s1.cost(table) == (200.0, 0)
+    assert s1.main_model(table) == "claude-fable-5"
+    assert sessions["S2"].product == "Claude Code CLI"
+    assert len(sessions["S2"].calls) == 1  # the copied m1 stays with S1
+    cowork = sessions["local_abc"]
+    assert cowork.product == "Cowork" and len(cowork.calls) == 2
+    assert cowork.title == "outputs: report.docx"
+    assert cowork.cost(table) == (100.0, 0)  # audit.jsonl ignored
+    assert stats["fast mode responses"] == 1
+    assert stats["unreadable lines"] == 1
+    assert stats["local messages skipped"] == 1
+    assert stats["responses already counted in another session"] == 1
+
+
+def test_titles_can_be_left_out_and_since_filters(roots):
+    sessions, _ = discover_sessions(roots, include_titles=False, since=date(2026, 9, 1))
+    assert set(sessions) == {"S1", "local_abc"}
+    assert all(s.title == "" for s in sessions.values())
+
+
+def test_sheet_round_trip_with_excel_semicolons_and_merge(roots, table, tmp_path):
+    sessions, _ = discover_sessions(roots)
+    sheet = tmp_path / "sessions.csv"
+    assert write_sheet(sheet, sessions, table=table) == (3, 0)
+    rows = read_sheet(sheet)
+    assert [r["session_id"] for r in rows] == ["local_abc", "S1", "S2"]
+    assert rows[1]["api_cost_usd"] == "200.00" and rows[1]["main_model"] == "claude-fable-5"
+
+    # What French Excel saves: semicolons, the Windows code page, no sep line.
+    header = ";".join(rows[0].keys())
+    body = []
+    for r in rows:
+        if r["session_id"] == "S1":
+            r = {**r, "task": "facture", "note": "déjà vu"}
+        body.append(";".join(r.values()))
+    sheet.write_bytes(("\r\n".join([header] + body) + "\r\n").encode("cp1252"))
+    edited = read_sheet(sheet)
+    assert next(r for r in edited if r["session_id"] == "S1")["note"] == "déjà vu"
+
+    # Listing again keeps what was typed.
+    existing = {r["session_id"]: r for r in edited}
+    assert write_sheet(sheet, sessions, table=table, existing=existing) == (3, 1)
+    assert next(r for r in read_sheet(sheet) if r["session_id"] == "S1")["task"] == "facture"
+
+
+def test_import_writes_records_and_labels_once(roots):
+    sessions, _ = discover_sessions(roots)
+    rows = [
+        {"session_id": "S1", "task": "invoice-fix", "task_type": "coding", "outcome": "pass",
+         "leaked": "oui", "note": ""},
+        {"session_id": "local_abc", "task": "report", "task_type": "writing", "outcome": "FAIL",
+         "leaked": "", "note": "late"},
+        {"session_id": "S2", "task": "", "outcome": "pass"},
+        {"session_id": "gone", "task": "old", "outcome": "pass"},
+        {"session_id": "S1", "task": "x", "outcome": "fail", "leaked": "yes"},
+    ]
+    imported: dict[str, str] = {}
+    result = import_sheet(rows, sessions, imported)
+    assert len(result.records) == 5  # 3 calls for S1, 2 for the Cowork session
+    assert {r.task_type for r in result.records} == {"coding", "writing"}
+    firsts = [(l.task_id, l.outcome, l.leaked) for l in result.labels][:2]
+    assert firsts == [("invoice-fix", "pass", True), ("report", "fail", False)]
+    assert result.blank == 1 and result.missing == ["gone"]
+    assert any("already imported under task 'invoice-fix'" in p for p in result.problems)
+    assert any("leak ignored" in p for p in result.problems)
+    text = json.dumps([r.to_json() for r in result.records])
+    for secret in SECRETS:
+        assert secret not in text
+
+    previous = {(l.task_id, l.attempt_id): l for l in result.labels[:2]}
+    again = import_sheet(rows[:2], sessions, imported, previous)
+    assert again.records == [] and again.already_imported == 2 and again.unchanged_labels == 2
+
+
+def test_harness_summary(roots):
+    sessions, _ = discover_sessions(roots)
+    assert harness_summary(list(sessions.values())) == (
+        "Claude Code CLI 2.1.200 to 2.1.257; Claude Code desktop 2.1.257; Cowork 2.1.257"
+    )
+
+
+def test_cli_list_import_report(roots, tmp_path, capsys):
+    code_root, cowork_root = (str(p) for _, p in roots)
+    prices = _prices(tmp_path / "prices.json")
+    sheet, log, labels = tmp_path / "s.csv", tmp_path / "log.jsonl", tmp_path / "labels.jsonl"
+    paths = ["--path", code_root, "--path", cowork_root]
+
+    assert cli.main(["sessions", "list", "--out", str(sheet), "--prices", str(prices), *paths]) == 0
+    captured = capsys.readouterr()
+    assert "3 sessions" in captured.out and "shadow cost" in captured.out
+    assert "fast mode" in captured.err
+
+    rows = read_sheet(sheet)
+    for r in rows:
+        if r["session_id"] == "S1":
+            r.update(task="invoice-fix", task_type="coding", outcome="pass")
+        if r["session_id"] == "local_abc":
+            r.update(task="report", task_type="coding", outcome="fail")
+    write_sheet(sheet, {}, existing={r["session_id"]: r for r in rows})
+
+    args = ["sessions", "import", str(sheet), "--log", str(log), "--labels", str(labels), *paths]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert "imported 2 sessions" in out and "--harness" in out
+    assert len(read_jsonl(log)) == 5
+    assert cli.main(args) == 0
+    assert "already in the log: 2" in capsys.readouterr().out
+    assert len(read_jsonl(log)) == 5
+    raw = log.read_text(encoding="utf-8")
+    for secret in SECRETS:
+        assert secret not in raw
+
+    report_args = ["report", "--log", str(log), "--labels", str(labels), "--prices", str(prices),
+                   "--resamples", "50"]
+    assert cli.main(report_args) == 0
+    report = capsys.readouterr().out
+    assert "pass 1, fail 0" in report and "pass 0, fail 1" in report
+    assert "effort settings: xhigh" in report
+
+
+def test_empty_inference_geo_is_not_flagged(tmp_path):
+    line = _assistant("S9", "g1", "q9", "claude-opus-4-7", 5, "2026-05-01T10:00:00.000Z")
+    line["message"]["usage"]["inference_geo"] = ""
+    _write(tmp_path / "projects" / "p" / "S9.jsonl", [line])
+    _, stats = discover_sessions(roots_for_paths([str(tmp_path / "projects")]))
+    assert stats["regional inference responses"] == 0

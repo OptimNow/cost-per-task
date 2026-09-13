@@ -1,0 +1,7 @@
+team,service,amount
+platform,EC2,1240.50
+platform,S3,88.25
+data,BigQuery,410.10
+data,GCS,15.90
+platform,RDS,300.00
+web,CloudFront,42.42
