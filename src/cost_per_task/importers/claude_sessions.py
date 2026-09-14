@@ -239,21 +239,22 @@ def discover_sessions(
     include_titles: bool = True,
 ) -> tuple[dict[str, Session], Counter]:
     """Read every transcript under the roots. Returns the sessions that made
-    at least one model call, keyed by session id, and a counter of what was read."""
+    at least one model call, keyed by session id, and a counter of what was read.
+
+    ``since`` keeps the sessions whose last call falls on or after that date in
+    local time, as the sheet shows it. Every transcript is read all the same: a
+    session spans several files (sub-agents, Cowork) and a copied response
+    counts in the first session where it is found, so skipping files by date
+    would change the figures of the sessions kept.
+    """
     sessions: dict[str, Session] = {}
     owner: dict[tuple, str] = {}
     stats: Counter = Counter()
-    since_ts = datetime(since.year, since.month, since.day).timestamp() if since else None
 
     for source, root in roots:
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*.jsonl")):
-            try:
-                if since_ts is not None and path.stat().st_mtime < since_ts:
-                    continue
-            except OSError:
-                continue
             group = None
             hint = ""
             if source == "cowork":
@@ -269,7 +270,7 @@ def discover_sessions(
 
     found = {sid: s for sid, s in sessions.items() if s.calls}
     if since:
-        found = {sid: s for sid, s in found.items() if s.ended[:10] >= since.isoformat()}
+        found = {sid: s for sid, s in found.items() if _local(s.ended)[:10] >= since.isoformat()}
     return found, stats
 
 
