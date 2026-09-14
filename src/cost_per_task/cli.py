@@ -485,7 +485,11 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
         return 1
 
     scanned = [str(root) for _, root in roots if root.is_dir()]
-    print(f"cpt sessions: {len(sessions)} sessions with model calls, read from {stats['files']} transcripts in:")
+    active = f" active on or after {since}" if since else ""
+    print(
+        f"cpt sessions: {len(sessions)} sessions with model calls{active}, "
+        f"read from {stats['files']} transcripts in:"
+    )
     for folder in scanned or ["(none of the folders exist; use --path)"]:
         print(f"  {folder}")
     by_product: dict[str, int] = {}
