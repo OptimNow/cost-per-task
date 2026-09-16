@@ -6,6 +6,15 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Fixed
+- `cpt sessions list --since` left out transcripts last written before the date, so a session
+  started earlier and still active after it lost its older sub-agent transcripts (in Cowork, its
+  other transcripts): the sheet showed part of its calls and cost, sometimes the wrong main
+  model, and disagreed with `cpt sessions import`. Every transcript is now read, as the import
+  does, and sessions are filtered afterwards, so `--since` no longer shortens the scan.
+- `--since` compares the session end with the date in local time, as the sheet shows it. East of
+  UTC, a session whose last call came shortly after local midnight on that date was left out.
+
 ## [0.5.0] - 2026-09-13
 
 ### Added
