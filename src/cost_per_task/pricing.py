@@ -131,6 +131,29 @@ class PricingTable:
         return None
 
 
+def price_breakdown(record: StepRecord, table: PricingTable) -> dict[str, float] | None:
+    """Cost of one step per token class (input, cache_read, cache_write_5m,
+    cache_write_1h, output, reasoning) in the table's currency, or None if the
+    model is unpriced. The classes add up to ``price_step``."""
+    rates = table.rates_for(record.model)
+    if rates is None:
+        return None
+    write_1h = min(record.cache_write_1h_tokens, record.cache_write_tokens)
+    write_5m = record.cache_write_tokens - write_1h
+    reasoning_rate = (
+        rates.output_per_mtok if rates.reasoning_per_mtok is None else rates.reasoning_per_mtok
+    )
+    per_mtok = {
+        "input": record.input_tokens * rates.input_per_mtok,
+        "cache_read": record.cache_read_tokens * rates.cache_read_per_mtok,
+        "cache_write_5m": write_5m * rates.cache_write_5m_per_mtok,
+        "cache_write_1h": write_1h * rates.cache_write_1h_per_mtok,
+        "output": record.output_tokens * rates.output_per_mtok,
+        "reasoning": (record.reasoning_tokens or 0) * reasoning_rate,
+    }
+    return {key: value / 1_000_000 for key, value in per_mtok.items()}
+
+
 def price_step(record: StepRecord, table: PricingTable) -> float | None:
     """Cost of one step in the table's currency, or None if the model is unpriced."""
     rates = table.rates_for(record.model)

@@ -5,10 +5,11 @@ Commands:
   cpt run      run an agent command with the proxy set up and calls tagged
   cpt label    mark an attempt pass or fail (and optionally leaked), or import a CSV
   cpt report   cost per attempt and per solved task, per model and task type
+  cpt explain  where one attempt's cost went: by token class, model and step
   cpt compare  two-model comparison with the break-even cleanup cost K*
   cpt import   convert a Langfuse or LiteLLM usage export into a cpt log
   cpt prices   refresh a pricing table from the OptimNow AI Pricing Hub
-  cpt sessions list and import Claude Code and Cowork sessions from their transcripts
+  cpt sessions list, import and summarise Claude Code and Cowork sessions from their transcripts
   cpt mcp      serve the report over MCP (needs the [mcp] extra)
 """
 
@@ -34,22 +35,27 @@ from .importers.claude_sessions import (
     harness_summary,
     import_sheet,
     read_sheet,
+    render_sessions_summary,
     roots_for_paths,
+    summarise_sessions,
     write_sheet,
 )
 from .importers.common import ImportError_
 from .labels import Label, LabelError, append_label, import_csv, load_labels
+from .metrics import explain_attempt
 from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
 from .pricing import PricingError, PricingTable, default_table_paths
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
-from .report import render_comparison, render_json, render_report
+from .report import render_comparison, render_explain, render_json, render_report
 from .schema import JsonlWriter, read_jsonl
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
 DEFAULT_SHEET = "sessions.csv"
-DEFAULT_SESSIONS_LOG = "sessions-log.jsonl"
-DEFAULT_SESSIONS_LABELS = "sessions-labels.jsonl"
+# Where cpt sessions import wrote in 0.5.0; still used when present and the
+# default files are absent, so an earlier log is never split in two.
+LEGACY_SESSIONS_LOG = "sessions-log.jsonl"
+LEGACY_SESSIONS_LABELS = "sessions-labels.jsonl"
 DEFAULT_PRICES = "prices/anthropic.json"
 
 
@@ -140,6 +146,24 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("model_b", help="the reliable model (B)")
     _add_analysis_options(compare)
 
+    explain = sub.add_parser(
+        "explain", help="where one attempt's cost went: by token class, model and step"
+    )
+    explain.add_argument(
+        "--attempt", help="attempt id, or a unique prefix of it (default: the latest attempt)"
+    )
+    explain.add_argument("--task", help="task id, to pick its latest attempt")
+    explain.add_argument("--log", default=DEFAULT_LOG)
+    explain.add_argument("--labels", default=DEFAULT_LABELS)
+    explain.add_argument(
+        "--prices",
+        action="append",
+        help="pricing table JSON; repeat to merge vendors (default: the shipped tables)",
+    )
+    explain.add_argument(
+        "--top", type=int, default=10, help="how many of the most expensive steps to list (0: none)"
+    )
+
     imp = sub.add_parser("import", help="convert a usage export into cpt step records")
     imp.add_argument("source", choices=("langfuse", "litellm"))
     imp.add_argument("file", help="export file: .csv, .json or .jsonl")
@@ -173,9 +197,26 @@ def main(argv: list[str] | None = None) -> int:
     s_list.add_argument("--no-titles", action="store_true", help="leave session titles out of the sheet")
     s_import = sessions_sub.add_parser("import", help="import the sessions you gave a task, with labels")
     s_import.add_argument("sheet", nargs="?", default=DEFAULT_SHEET)
-    s_import.add_argument("--log", default=DEFAULT_SESSIONS_LOG)
-    s_import.add_argument("--labels", default=DEFAULT_SESSIONS_LABELS)
-    for sp in (s_list, s_import):
+    s_import.add_argument("--log", help=f"log to append to (default {DEFAULT_LOG}, as cpt run)")
+    s_import.add_argument("--labels", help=f"labels file (default {DEFAULT_LABELS}, as cpt label)")
+    s_summary = sessions_sub.add_parser(
+        "summary", help="totals by product, model and period at API list prices, no labels needed"
+    )
+    s_summary.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
+    s_summary.add_argument(
+        "--by", choices=("day", "week", "month"), default="month", help="period of the time table"
+    )
+    s_summary.add_argument(
+        "--subscription",
+        type=float,
+        metavar="PRICE",
+        help="monthly subscription price, to show the list-price cost as a multiple of it",
+    )
+    s_summary.add_argument(
+        "--top", type=int, default=5, help="how many of the most expensive sessions to list (0: none)"
+    )
+    s_summary.add_argument("--prices", action="append", help="pricing table(s) for the cost")
+    for sp in (s_list, s_import, s_summary):
         sp.add_argument("--source", choices=("all", "code", "cowork"), default="all",
                         help="Claude Code transcripts, Cowork sessions, or both")
         sp.add_argument("--path", action="append", default=[],
@@ -190,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         "label": _cmd_label,
         "report": _cmd_report,
         "compare": _cmd_compare,
+        "explain": _cmd_explain,
         "import": _cmd_import,
         "sessions": _cmd_sessions,
         "prices": _cmd_prices,
@@ -366,6 +408,45 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_explain(args: argparse.Namespace) -> int:
+    try:
+        records = read_jsonl(args.log)
+        table = PricingTable.load_many(args.prices or default_table_paths())
+    except (OSError, PricingError) as exc:
+        print(f"cpt explain: {exc}", file=sys.stderr)
+        return 1
+    in_task = [r for r in records if args.task is None or r.task_id == args.task]
+    if args.attempt:
+        ids = sorted({r.attempt_id for r in in_task})
+        matches = [i for i in ids if i == args.attempt] or [i for i in ids if i.startswith(args.attempt)]
+        if len(matches) != 1:
+            shown = ", ".join(matches[:5]) + (" ..." if len(matches) > 5 else "")
+            print(
+                f"cpt explain: '{args.attempt}' matches {len(matches)} attempts"
+                + (f": {shown}" if matches else ""),
+                file=sys.stderr,
+            )
+            return 1
+        steps = [r for r in in_task if r.attempt_id == matches[0]]
+    else:
+        found = _latest_attempt(records, args.task)
+        if found is None:
+            print("cpt explain: no matching attempt in the log", file=sys.stderr)
+            return 1
+        task_id, attempt_id = found
+        steps = [r for r in records if r.task_id == task_id and r.attempt_id == attempt_id]
+    try:
+        explanation = explain_attempt(steps, table, load_labels(args.labels))
+    except ValueError:
+        print(
+            f"cpt explain: attempt {steps[0].attempt_id} appears under several tasks; add --task",
+            file=sys.stderr,
+        )
+        return 1
+    print(render_explain(explanation, table, top_steps=args.top))
+    return 0
+
+
 def _cmd_import(args: argparse.Namespace) -> int:
     importer = import_langfuse if args.source == "langfuse" else import_litellm
     options = {"task_type": args.task_type}
@@ -454,7 +535,20 @@ def _print_session_warnings(stats) -> None:
 def _cmd_sessions(args: argparse.Namespace) -> int:
     if args.sessions_command == "list":
         return _cmd_sessions_list(args)
+    if args.sessions_command == "summary":
+        return _cmd_sessions_summary(args)
     return _cmd_sessions_import(args)
+
+
+def _print_scan_header(sessions, stats, roots, since) -> None:
+    scanned = [str(root) for _, root in roots if root.is_dir()]
+    active = f" active on or after {since}" if since else ""
+    print(
+        f"cpt sessions: {len(sessions)} sessions with model calls{active}, "
+        f"read from {stats['files']} transcripts in:"
+    )
+    for folder in scanned or ["(none of the folders exist; use --path)"]:
+        print(f"  {folder}")
 
 
 def _cmd_sessions_list(args: argparse.Namespace) -> int:
@@ -484,14 +578,7 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
         print(f"cpt sessions: {exc}", file=sys.stderr)
         return 1
 
-    scanned = [str(root) for _, root in roots if root.is_dir()]
-    active = f" active on or after {since}" if since else ""
-    print(
-        f"cpt sessions: {len(sessions)} sessions with model calls{active}, "
-        f"read from {stats['files']} transcripts in:"
-    )
-    for folder in scanned or ["(none of the folders exist; use --path)"]:
-        print(f"  {folder}")
+    _print_scan_header(sessions, stats, roots, since)
     by_product: dict[str, int] = {}
     for session in sessions.values():
         by_product[session.product] = by_product.get(session.product, 0) + 1
@@ -520,24 +607,26 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         print(f"cpt sessions: cannot read the sheet: {exc}", file=sys.stderr)
         return 1
+    log = _sessions_file(args.log, DEFAULT_LOG, LEGACY_SESSIONS_LOG)
+    labels_path = _sessions_file(args.labels, DEFAULT_LABELS, LEGACY_SESSIONS_LABELS)
     sessions, stats = discover_sessions(_session_roots(args), include_titles=False)
     imported_tasks: dict[str, str] = {}
-    if Path(args.log).exists():
-        for record in read_jsonl(args.log):
+    if Path(log).exists():
+        for record in read_jsonl(log):
             imported_tasks.setdefault(record.attempt_id, record.task_id)
-    existing_labels = load_labels(args.labels) if Path(args.labels).exists() else {}
+    existing_labels = load_labels(labels_path)
     result = import_sheet(rows, sessions, imported_tasks, existing_labels)
 
-    writer = JsonlWriter(args.log)
+    writer = JsonlWriter(log)
     for record in result.records:
         writer.append(record)
     for label in result.labels:
-        append_label(args.labels, label)
+        append_label(labels_path, label)
 
     print(
         f"cpt sessions: imported {len(result.imported)} sessions "
-        f"({len(result.records)} model calls) into {args.log}; "
-        f"{len(result.labels)} labels written to {args.labels}"
+        f"({len(result.records)} model calls) into {log}; "
+        f"{len(result.labels)} labels written to {labels_path}"
     )
     print(
         f"  skipped: no task {result.blank}, already in the log: {result.already_imported}, "
@@ -554,11 +643,51 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
     _print_session_warnings(stats)
     measured = [sessions[sid] for sid in imported_tasks if sid in sessions]
     harness = harness_summary(measured) or "Claude Code"
-    print("Report:")
-    print(
-        f"  python -m cost_per_task.cli report --log {args.log} --labels {args.labels} "
-        f'--prices "{(_default_price_paths() or [DEFAULT_PRICES])[0]}" --seed 1 --harness "{harness}"'
+    options = (f" --log {log}" if log != DEFAULT_LOG else "") + (
+        f" --labels {labels_path}" if labels_path != DEFAULT_LABELS else ""
     )
+    print("Report:")
+    print(f'  python -m cost_per_task.cli report{options} --seed 1 --harness "{harness}"')
+    return 0
+
+
+def _sessions_file(given: str | None, default: str, legacy: str) -> str:
+    """The log or labels file for cpt sessions import: what was asked for,
+    else the default shared with cpt run, else the 0.5.0 name if only that
+    file exists."""
+    if given:
+        return given
+    if not Path(default).exists() and Path(legacy).exists():
+        print(
+            f"cpt sessions: using {legacy} from an earlier version; rename it to {default} "
+            "to share the default files with the other commands",
+            file=sys.stderr,
+        )
+        return legacy
+    return default
+
+
+def _cmd_sessions_summary(args: argparse.Namespace) -> int:
+    try:
+        since = date.fromisoformat(args.since) if args.since else None
+    except ValueError:
+        print(f"cpt sessions: --since expects YYYY-MM-DD, got '{args.since}'", file=sys.stderr)
+        return 2
+    try:
+        table = PricingTable.load_many(args.prices or _default_price_paths())
+    except (OSError, PricingError) as exc:
+        print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
+        return 1
+    roots = _session_roots(args)
+    sessions, stats = discover_sessions(roots, since=since, include_titles=False)
+    _print_scan_header(sessions, stats, roots, since)
+    if not sessions:
+        _print_session_warnings(stats)
+        return 1
+    summary = summarise_sessions(sessions, table, period=args.by, top=args.top)
+    print()
+    print(render_sessions_summary(summary, table, subscription=args.subscription))
+    _print_session_warnings(stats)
     return 0
 
 

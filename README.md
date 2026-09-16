@@ -30,8 +30,9 @@ Python 3.11 or later, no runtime dependencies, dated price tables included. Then
 in that matches how you work:
 
 <img src="https://img.shields.io/badge/-Claude%20Code%20%26%20Cowork-D97757?logo=anthropic&logoColor=white" alt="Claude Code and Cowork" height="22"/><br>
-`cpt sessions list`, fill in the sheet it writes, then `cpt sessions import`. Measures the
-sessions already on your computer from their transcripts, with no proxy, no API key and no
+`cpt sessions summary` shows what the sessions already on your computer would cost at API
+prices, by month and by model. `cpt sessions list`, fill in the sheet it writes, then
+`cpt sessions import` to measure them per task. Transcripts only: no proxy, no API key, no
 extra spend. [Guide](docs/claude-sessions.md)
 
 <img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
@@ -184,7 +185,7 @@ attributed to the model carrying the largest share of the cost.
 | **Anthropic** | proxy, any Claude model, plain or streaming | cache reads and 5-minute and 1-hour cache writes priced separately; reasoning billed inside output |
 | **OpenAI** | proxy, Chat Completions and Responses APIs, plain or streaming | reasoning tokens split out of output; `stream_options.include_usage` added so streams report usage |
 | **OpenRouter** and other OpenAI-compatible gateways | proxy, `--openai-upstream https://openrouter.ai/api` | native counts and the charged cost requested, then reconciled against list price; covers Gemini, Grok, Mistral, DeepSeek and the rest of what the gateway routes |
-| **Claude Code and Cowork** | `cpt sessions list`, then `cpt sessions import` | transcripts read from disk; subscription use is priced as a shadow cost at API list prices |
+| **Claude Code and Cowork** | `cpt sessions summary`; `cpt sessions list`, then `cpt sessions import` | transcripts read from disk; subscription use is priced as a shadow cost at API list prices |
 | **Langfuse** | `cpt import langfuse` | session as task and trace as attempt by default |
 | **LiteLLM** | `cpt import litellm` | spend logs carry no cache breakdown, so imports show 0% cache hits |
 
@@ -201,9 +202,11 @@ labels, report and comparison are model-agnostic already.
 | `cpt run --task-id T [--task-type X] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id |
 | `cpt serve --port 4000 --task-id T` | run the proxy on its own and point any process at it |
 | `cpt label pass\|fail [--task T] [--attempt A] [--leak]` | label the latest or a named attempt; `--import labels.csv` labels in bulk |
+| `cpt sessions summary [--since D] [--by month] [--subscription P]` | what your Claude Code and Cowork sessions would cost at list prices, by product, model and period; no labels needed |
 | `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet |
 | `cpt import langfuse\|litellm FILE` | convert a usage export into cpt records |
 | `cpt report [--cleanup-cost K] [--harness H] [--json]` | the report, per model and task type |
+| `cpt explain [--attempt A] [--task T]` | where one attempt's cost went: by token class, by model and the most expensive steps |
 | `cpt compare A B [--cleanup-cost K] [--json]` | two-model comparison with the break-even cleanup cost K* |
 | `cpt prices refresh --provider anthropic\|openai [--write]` | compare a price table with the OptimNow AI Pricing Hub; write only when asked |
 | `cpt mcp` | serve the report to AI assistants over MCP (optional extra) |
@@ -256,9 +259,11 @@ The default run lists new, removed and repriced models with the catalogue date, 
 models the hub cannot price fully and flags cache-read prices that look wrong. Nothing is
 written without `--write`, so an upstream feed error never lands unseen.
 
-**Known limitation.** One rate per token class. Long-context tiers (Anthropic above 200K
-input tokens, OpenAI above 272K) and batch discounts are not modelled. If your attempts cross
-those thresholds the report understates cost, and it states which prices it applied.
+**Known limitation.** One rate per token class. Batch discounts, fast mode, the priority tier
+and data residency surcharges are not modelled, nor is OpenAI's long-context tier above 272K
+input tokens on GPT-5.5 and GPT-5.4: attempts that cross it are understated, and the report
+states which prices it applied. Claude 4.6 and later models have no such tier: Anthropic bills
+the full 1M-token window at the standard rate (pricing page, read on 2026-09-14).
 
 ---
 

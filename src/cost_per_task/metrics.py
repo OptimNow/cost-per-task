@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from .labels import Label
-from .pricing import PricingTable, price_step
+from .pricing import PricingTable, price_breakdown, price_step
 from .schema import StepRecord
 from .stats import bootstrap_interval, capped_retry_success, pass_k, percentile, wilson_interval
 
@@ -312,3 +312,110 @@ def break_even_cleanup_cost(a: GroupSummary, b: GroupSummary) -> float | None:
     if a.leak_rate is None or b.leak_rate is None or a.leak_rate == b.leak_rate:
         return None
     return (b.cpt_solved - a.cpt_solved) / (a.leak_rate - b.leak_rate)
+
+
+CLASS_LABELS = (
+    ("input", "input"),
+    ("cache_read", "cache read"),
+    ("cache_write_5m", "cache write 5m"),
+    ("cache_write_1h", "cache write 1h"),
+    ("output", "output"),
+    ("reasoning", "reasoning"),
+)
+_ALWAYS_SHOWN = ("input", "cache_read", "cache_write_5m", "output")
+
+
+@dataclass
+class ClassCost:
+    key: str
+    label: str
+    tokens: int
+    cost: float
+
+
+@dataclass
+class StepCost:
+    step_id: int
+    timestamp: str
+    model: str
+    prompt_tokens: int  # input, cache reads and cache writes together
+    output_tokens: int  # output and reasoning together
+    cost: float | None  # None when the model is unpriced
+    tool_names: list[str]
+    effort: str | None
+
+
+@dataclass
+class Explanation:
+    """One attempt's cost taken apart for ``cpt explain``: by token class, by
+    model and by step."""
+
+    attempt: Attempt
+    classes: list[ClassCost]
+    by_model: list[tuple[str, int, float]]  # model, steps, cost; largest cost first
+    steps: list[StepCost]  # in call order
+    largest_prompt: StepCost | None
+
+
+def explain_attempt(
+    records: list[StepRecord],
+    table: PricingTable,
+    labels: dict[tuple[str, str], Label],
+) -> Explanation:
+    """Take one attempt's cost apart. ``records`` must all belong to the same
+    (task_id, attempt_id). A token class is listed when it has tokens; the
+    four common ones always are."""
+    attempts = build_attempts(records, table, labels)
+    if len(attempts) != 1:
+        raise ValueError(f"expected the records of one attempt, got {len(attempts)}")
+    tokens: Counter = Counter()
+    costs: Counter = Counter()
+    model_steps: Counter = Counter()
+    model_cost: Counter = Counter()
+    steps: list[StepCost] = []
+    for step in sorted(records, key=lambda s: (s.timestamp, s.step_id)):
+        write_1h = min(step.cache_write_1h_tokens, step.cache_write_tokens)
+        tokens.update(
+            {
+                "input": step.input_tokens,
+                "cache_read": step.cache_read_tokens,
+                "cache_write_5m": step.cache_write_tokens - write_1h,
+                "cache_write_1h": write_1h,
+                "output": step.output_tokens,
+                "reasoning": step.reasoning_tokens or 0,
+            }
+        )
+        breakdown = price_breakdown(step, table)
+        if breakdown is not None:
+            costs.update(breakdown)
+        cost = price_step(step, table)
+        model_steps[step.model] += 1
+        model_cost[step.model] += cost or 0.0
+        steps.append(
+            StepCost(
+                step_id=step.step_id,
+                timestamp=step.timestamp,
+                model=step.model,
+                prompt_tokens=step.input_tokens + step.cache_read_tokens + step.cache_write_tokens,
+                output_tokens=step.output_tokens + (step.reasoning_tokens or 0),
+                cost=cost,
+                tool_names=list(step.tool_names),
+                effort=step.effort,
+            )
+        )
+    classes = [
+        ClassCost(key, label, tokens[key], costs[key])
+        for key, label in CLASS_LABELS
+        if tokens[key] or key in _ALWAYS_SHOWN
+    ]
+    by_model = sorted(
+        ((model, model_steps[model], model_cost[model]) for model in model_steps),
+        key=lambda item: (-item[2], -item[1], item[0]),
+    )
+    return Explanation(
+        attempt=attempts[0],
+        classes=classes,
+        by_model=by_model,
+        steps=steps,
+        largest_prompt=max(steps, key=lambda s: s.prompt_tokens, default=None),
+    )
