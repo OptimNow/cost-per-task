@@ -22,6 +22,12 @@ versioning, with the minor digit bumped for any user-visible feature.
   with a message; `--log` and `--labels` still choose.
 - The report command printed after an import no longer names a price table: the shipped tables
   apply by default.
+- README: each Get started block opens with who it is for and ends with its own report command;
+  task, attempt, step, leak, harness and shadow cost are defined where they first appear;
+  `python -m cost_per_task.cli` is named as the fallback when `cpt` is not on PATH; the directory
+  tree stops at the top level.
+- The Claude sessions guide's compare command no longer needs a copy of the repository for
+  `--prices`, and the testing guide's Level 3 states what changes for sessions users.
 
 ### Documentation
 - Long context is no longer listed as a cause of understated cost for Claude: Anthropic bills

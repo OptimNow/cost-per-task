@@ -112,12 +112,20 @@ python -m cost_per_task.cli sessions import
 ```
 
 This adds the usage of every session you gave a task to `cpt-log.jsonl`, and your
-outcomes to `cpt-labels.jsonl`, the files every other command reads by default. It prints
-the report command to run next, with the harness already filled in from the products and
-Claude Code versions it saw. Running the import again adds only sessions not yet imported,
-and updates outcomes you changed; a task name changed on an imported session is ignored
-with a warning, so to rename a task delete the two files and import again. The report is
-read exactly as in the [testing guide](testing-guide.md).
+outcomes to `cpt-labels.jsonl`, the files every other command reads by default, so the
+report needs no file options:
+
+```
+python -m cost_per_task.cli report --cleanup-cost 25 --seed 1
+```
+
+The import prints this command for you, with `--harness` already filled in from the
+products and Claude Code versions it saw; keep that part, because the disclosure
+checklist needs it. `--cleanup-cost` is what one leaked failure costs you to repair, in
+the currency of the price table; 25 is a placeholder. Running the import again adds only
+sessions not yet imported, and updates outcomes you changed; a task name changed on an
+imported session is ignored with a warning, so to rename a task delete the two files and
+import again. The report is read exactly as in the [testing guide](testing-guide.md).
 
 Version 0.5.0 wrote `sessions-log.jsonl` and `sessions-labels.jsonl`. A folder that holds
 only those keeps using them, and the import says so; rename them to the new names to run
