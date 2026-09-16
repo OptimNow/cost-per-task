@@ -104,8 +104,15 @@ def _group_section(s: GroupSummary, currency: str) -> list[str]:
         f"  attempts {s.attempts} over {s.tasks} tasks; labelled {s.labelled} "
         f"(pass {s.successes}, fail {s.failures}, leaked {s.leaks})"
     )
+    # E[C] in CPT_solved is the mean over labelled attempts only. When some
+    # attempts are unlabelled it differs in scope from the mean over all
+    # attempts, so print it too and say so on the CPT_solved line.
+    partly_labelled = 0 < s.labelled < s.attempts
+    mean = _money(s.mean_cost, currency)
+    if partly_labelled and s.labelled_mean_cost is not None:
+        mean += f" (labelled attempts {_money(s.labelled_mean_cost, currency)})"
     lines.append(
-        f"  attempt cost C: mean {_money(s.mean_cost, currency)}, P90 {_money(s.p90_cost, currency)}, "
+        f"  attempt cost C: mean {mean}, P90 {_money(s.p90_cost, currency)}, "
         f"total {_money(s.total_cost, currency)}"
     )
     if s.success_rate is None:
@@ -122,7 +129,8 @@ def _group_section(s: GroupSummary, currency: str) -> list[str]:
         if s.cpt_solved_interval:
             lo, hi = s.cpt_solved_interval
             ci = f" (bootstrap 95%: {lo:.4f} to {hi:.4f}, {s.resamples} resamples)"
-        lines.append(f"  CPT_solved = E[C] / p: {_money(s.cpt_solved, currency)}{ci}")
+        scope = " over labelled attempts" if partly_labelled else ""
+        lines.append(f"  CPT_solved = E[C] / p: {_money(s.cpt_solved, currency)}{scope}{ci}")
     lines.append(
         f"  cost per task attempted (failures included): "
         f"{_money(s.cost_per_task_attempted, currency)}"
@@ -164,15 +172,12 @@ def _checklist(
         + (f"; source: {table.source}" if table.source else "")
     )
     lines.append(f"  harness: {harness or 'not stated (pass --harness)'}")
-    lines.append(
-        "  cache hit rate: "
-        + "; ".join(
-            f"{_group_name(s)} {100 * s.cache_hit_rate:.1f}%"
-            for s in summaries
-            if s.cache_hit_rate is not None
-        )
-        or "  cache hit rate: n/a"
+    cache_rates = "; ".join(
+        f"{_group_name(s)} {100 * s.cache_hit_rate:.1f}%"
+        for s in summaries
+        if s.cache_hit_rate is not None
     )
+    lines.append(f"  cache hit rate: {cache_rates or 'n/a'}")
     lines.append(f"  effort settings: {', '.join(efforts) or 'not recorded'}")
     lines.append(
         "  sample size: "
