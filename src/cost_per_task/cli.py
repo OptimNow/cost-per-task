@@ -25,6 +25,7 @@ import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from . import __version__
 from .analysis import load_analysis, pick_model
 from .importers import import_langfuse, import_litellm
 from .importers.claude_sessions import (
@@ -103,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="cpt", description="Measure the real cost per completed task of LLM agents."
     )
+    parser.add_argument("--version", action="version", version=f"cpt {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="run the capture proxy in the foreground")

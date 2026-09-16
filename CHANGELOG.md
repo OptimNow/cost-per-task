@@ -6,6 +6,19 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Fixed
+- Anthropic streaming: the counts in `message_delta` are cumulative, so a response that ran
+  server-side tools (web search) now logs its final input and cache counts instead of the
+  `message_start` values. Deltas that only carry `output_tokens` still work.
+- The disclosure checklist printed an empty `cache hit rate:` line, instead of `n/a`, when no
+  group had a cache hit rate.
+- `cpt --version` prints the installed version.
+- CPT_solved divides the mean cost over labelled attempts, while the report's `attempt cost C`
+  line averages all attempts. When some attempts are unlabelled, the report now prints the
+  labelled mean next to the overall one and says so on the CPT_solved line; the JSON output
+  gains `labelled_mean_cost`.
+- Testing guide: a garbled sentence in "What to keep from a run".
+
 ## [0.5.0] - 2026-09-13
 
 ### Added
