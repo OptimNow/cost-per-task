@@ -54,7 +54,8 @@ cpt report --cleanup-cost 25
 The summary shows what your sessions would cost at API prices, by month and by model, before
 any labelling. The list writes a sheet: give each session a task name and pass or fail, then
 run the import; the sheet is the labelling step. The import prints the report command for
-you. [Guide](docs/claude-sessions.md)
+you. [Quick path](docs/claude-sessions.md#quick-path), six commands with what you should see, and
+[guide](docs/claude-sessions.md).
 
 <img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
 **You run your own agent** against Anthropic, OpenAI or OpenRouter. Start it through the

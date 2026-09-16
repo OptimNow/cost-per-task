@@ -36,6 +36,8 @@ versioning, with the minor digit bumped for any user-visible feature.
   input tokens.
 - The Claude Code and Cowork guide states that web searches run outside the transcripts, so
   their tokens and the search fee are not in a session's cost.
+- A "Quick path" at the top of the Claude Code and Cowork guide: the six commands in order,
+  with what each one shows, linked from the README's Get started block.
 
 ### Fixed
 - `cpt sessions list --since` left out transcripts last written before the date, so a session
