@@ -6,6 +6,8 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-16
+
 ### Added
 - `cpt sessions summary`: what the Claude Code and Cowork sessions on the computer would cost at
   API list prices, by product, model and period (day, week or month), with the token classes,
@@ -151,7 +153,8 @@ Published to PyPI and as a GitHub Release on 2026-09-12, from commit 85d465e (ta
   the Anthropic price list.
 - `cpt run`, `cpt serve`, `cpt report`.
 
-[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.6.0
 [0.5.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.5.0
 [0.4.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.4.0
 [0.3.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.3.0

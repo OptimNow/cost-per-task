@@ -372,7 +372,7 @@ cost-per-task/
 
 ## Status
 
-Version 0.5.0 is on PyPI. What has been checked, and how:
+Version 0.6.0 is on PyPI. What has been checked, and how:
 
 | Part | How it was checked |
 |---|---|
