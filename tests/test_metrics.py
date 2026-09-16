@@ -167,10 +167,57 @@ def test_reports_render_and_carry_the_checklist(table):
         "disclosure checklist",
         "harness: test-harness 1.0",
         "model versions: model-a, model-b",
+        "cache hit rate: model-a [coding] 0.0%; model-b [coding] 0.0%",
     ):
         assert expected in text
+    assert "labelled attempts" not in text  # everything is labelled: one mean, no scope note
 
     a, b = summarise(attempts, by_task_type=False, cleanup_cost=10.0, resamples=50, seed=1)
     comparison = render_comparison(a, b, table)
     assert "K* = 11.0000 USD" in comparison
     assert "below K*, model-a (cheaper, leakier) wins" in comparison
+
+
+def test_checklist_cache_hit_rate_falls_back_to_na(table):
+    # A group whose attempts carried no prompt tokens has no cache hit rate.
+    record = _step("t1", "a1", 0, "model-a", 0)
+    record.output_tokens = 5
+    attempts = build_attempts([record], table, {})
+    text = render_report(attempts, summarise(attempts, resamples=10), table)
+    assert "  cache hit rate: n/a" in text
+    assert "  cache hit rate: " not in text.splitlines()
+
+
+def test_labelled_mean_is_shown_when_some_attempts_are_unlabelled(table):
+    # Costs 1, 1 and 10 with the expensive attempt unlabelled: the mean over all
+    # attempts is 4, while CPT_solved divides the labelled mean, 1, by p = 1.
+    records = [
+        _step("t1", "a1", 0, "model-a", 1),
+        _step("t2", "a1", 1, "model-a", 1),
+        _step("t3", "a1", 2, "model-a", 10),
+    ]
+    labels = {
+        ("t1", "a1"): Label("t1", "a1", "pass", leaked=False),
+        ("t2", "a1"): Label("t2", "a1", "pass", leaked=False),
+    }
+    attempts = build_attempts(records, table, labels)
+    summary = summarise(attempts, resamples=10, seed=1)[0]
+    assert summary.mean_cost == pytest.approx(4.0)
+    assert summary.labelled_mean_cost == pytest.approx(1.0)
+    assert summary.cpt_solved == pytest.approx(1.0)
+    text = render_report(attempts, [summary], table)
+    assert "attempt cost C: mean 4.0000 USD (labelled attempts 1.0000 USD), P90" in text
+    assert "CPT_solved = E[C] / p: 1.0000 USD over labelled attempts (bootstrap 95%" in text
+
+    # Once every attempt is labelled the two means coincide and the note goes.
+    labels[("t3", "a1")] = Label("t3", "a1", "fail", leaked=False)
+    attempts = build_attempts(records, table, labels)
+    summary = summarise(attempts, resamples=10, seed=1)[0]
+    assert summary.labelled_mean_cost == pytest.approx(summary.mean_cost)
+    assert summary.cpt_solved == pytest.approx(6.0)
+    text = render_report(attempts, [summary], table)
+    assert "labelled attempts" not in text
+
+    # Nothing labelled: no labelled mean at all.
+    summary = summarise(build_attempts(records, table, {}), resamples=10)[0]
+    assert summary.labelled_mean_cost is None

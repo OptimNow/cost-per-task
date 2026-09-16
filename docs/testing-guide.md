@@ -111,6 +111,9 @@ python -m cost_per_task.cli report --log level1-log.jsonl --labels level1-labels
   fifteen still leaves a lower bound of about 80%: the interval is the tool telling
   you how little fifteen tries actually prove. It narrows as n grows.
 - `CPT_solved = E[C] / p`: equal to the mean attempt cost when everything passed.
+  E[C] and p are both taken over labelled attempts. If some attempts are not
+  labelled yet, the `attempt cost C` line also prints the mean over labelled
+  attempts, and that is the one CPT_solved divides by p.
 - `pass^3`: the share of tasks solved on all three tries. Expect 1.000 here.
 
 What this level proves: capture works (tokens are counted from the API response),
@@ -265,7 +268,7 @@ third model such as Sonnet 5 to see where the cheaper tier stops being cheaper.
 
 ## What to keep from a run
 
-For your own records, and for anyone who wants to check the result: the two files
-level's log and labels files, the `prices\anthropic.json` used, and the
+For your own records, and for anyone who wants to check the result: the level's log
+and labels files, the `prices\anthropic.json` used, and the
 full text of `cpt report` and `cpt compare`. Together they let someone reproduce
 every number in the report; `--seed 1` makes the bootstrap intervals reproducible too.

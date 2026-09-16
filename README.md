@@ -129,7 +129,7 @@ Per model and per task type, the paper's estimators and what each one tells you:
 |---|---|---|
 | Attempt cost, mean and P90 | C_attempt = sum over calls of priced tokens (input, cache read, cache write, reasoning, output) | What one try costs, and what a bad try costs. Agent costs are heavy-tailed, so P90 is the budgeting number |
 | Success rate p, with a Wilson 95% interval | passes / labelled attempts | How often a try works, and how sure you can be given how few tries you measured |
-| Cost per solved task, with a bootstrap 95% interval | CPT_solved = E[C_attempt] / p | What a correct result costs once failed tries are paid for. The headline number |
+| Cost per solved task, with a bootstrap 95% interval | CPT_solved = E[C_attempt] / p, both over labelled attempts | What a correct result costs once failed tries are paid for. The headline number. Unlabelled attempts count in the mean above but not here; when there are any, the report prints the mean over labelled attempts as well |
 | Cost per task attempted | total cost / distinct tasks | The same cost seen from the budget side, failures included, whether or not the task was ever solved |
 | Capped-retry success p_N | 1 - (1 - p)^N | Chance of success within N tries |
 | Consistency pass^k | share of tasks solved on every one of their first k tries | Whether the agent is reliable or lucky; single-try success rates hide collapse here |

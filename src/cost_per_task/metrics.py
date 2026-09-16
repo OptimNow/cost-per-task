@@ -5,9 +5,10 @@ model is the one carrying the largest share of that cost, which matters for
 agents that mix a main model with cheaper side calls. Attempts are grouped by
 primary model (and task type when requested) and each group gets:
 
-- mean and P90 of C_attempt over all attempts
+- mean and P90 of C_attempt over all attempts, and the mean over labelled attempts
 - success rate p over labelled attempts, with a Wilson interval
-- CPT_solved = E[C_attempt] / p, with a task-level bootstrap interval
+- CPT_solved = E[C_attempt] / p, both taken over labelled attempts so the
+  estimator stays coherent, with a task-level bootstrap interval
 - cost per task attempted = total cost / distinct tasks (failures included)
 - capped-retry success p_N and pass^k consistency
 - leak rate L = leaked passes / passes, and CPT_risk = CPT_solved + L x K
@@ -158,6 +159,9 @@ class GroupSummary:
     reported_cost_attempts: int = 0
     reported_cost_total: float | None = None
     table_cost_for_reported: float | None = None
+    # Mean C_attempt over labelled attempts only: the E[C] that CPT_solved
+    # divides by p. None when nothing is labelled.
+    labelled_mean_cost: float | None = None
 
 
 def _cpt_solved(attempts: list[Attempt]) -> float | None:
@@ -224,6 +228,7 @@ def _summarise_group(
 
     success_rate = successes / len(labelled) if labelled else None
     success_interval = wilson_interval(successes, len(labelled)) if labelled else None
+    labelled_mean_cost = sum(a.cost for a in labelled) / len(labelled) if labelled else None
 
     cpt_solved = _cpt_solved(members)
     cpt_interval = None
@@ -300,6 +305,7 @@ def _summarise_group(
             sum(a.reported_cost for a in with_reported) if with_reported else None
         ),
         table_cost_for_reported=sum(a.cost for a in with_reported) if with_reported else None,
+        labelled_mean_cost=labelled_mean_cost,
     )
 
 

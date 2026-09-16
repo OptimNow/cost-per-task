@@ -58,6 +58,7 @@ def test_report_json_output(workspace, capsys):
     a = next(g for g in payload["groups"] if g["model"] == "model-a")
     # model-a: costs 1, 3, 2 -> mean 2; passes 2 of 3 -> CPT 3; leaks 1 of 2 -> L 0.5
     assert a["mean_cost"] == pytest.approx(2.0)
+    assert a["labelled_mean_cost"] == pytest.approx(2.0)
     assert a["cpt_solved"] == pytest.approx(3.0)
     assert a["leak_rate"] == pytest.approx(0.5)
     assert a["cpt_risk"] == pytest.approx(8.0)
