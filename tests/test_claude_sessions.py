@@ -4,7 +4,9 @@ laid out exactly like the real folders."""
 from __future__ import annotations
 
 import json
-from datetime import date
+import os
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -58,6 +60,12 @@ def _write(path: Path, lines) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(line if isinstance(line, str) else json.dumps(line) for line in lines)
     path.write_text(text + "\n", encoding="utf-8")
+
+
+def _touch(path: Path, day: str) -> None:
+    """Set the file's last-modified time to local noon on that day."""
+    stamp = datetime.fromisoformat(f"{day}T12:00:00").timestamp()
+    os.utime(path, (stamp, stamp))
 
 
 def _prices(path: Path) -> Path:
@@ -140,6 +148,90 @@ def test_titles_can_be_left_out_and_since_filters(roots):
     sessions, _ = discover_sessions(roots, include_titles=False, since=date(2026, 9, 1))
     assert set(sessions) == {"S1", "local_abc"}
     assert all(s.title == "" for s in sessions.values())
+
+
+def test_since_keeps_whole_sessions_whatever_the_file_dates(tmp_path, table, capsys):
+    """The case seen on 14 September 2026: a session started on the 12th, still
+    active on the 14th, whose sub-agent transcripts were last written on the
+    12th. With --since, each session listed has the calls the import finds."""
+    code = tmp_path / "claude" / "projects"
+    main = code / "proj" / "L1.jsonl"
+    _write(main, [
+        _assistant("L1", "l1", "r1", "claude-sonnet-5", 10, "2026-09-12T09:00:00.000Z"),
+        _assistant("L1", "l2", "r2", "claude-sonnet-5", 10, "2026-09-14T12:00:00.000Z"),
+    ])
+    agents = [code / "proj" / "L1" / "subagents" / f"agent-a{n}.jsonl" for n in (1, 2)]
+    for n, agent in enumerate(agents, start=1):
+        _write(agent, [_assistant("L1", f"s{n}", f"q{n}", "claude-fable-5-1", 100,
+                                  f"2026-09-12T10:0{n}:00.000Z", sidechain=True)])
+    # B0 resumed A0: the copied response h1 counts in A0, where it is found first
+    _write(code / "proj" / "A0.jsonl", [
+        _assistant("A0", "h1", "k1", "claude-fable-5", 40, "2026-09-12T08:00:00.000Z"),
+    ])
+    _write(code / "proj" / "B0.jsonl", [
+        _assistant("B0", "h1", "k1", "claude-fable-5", 40, "2026-09-12T08:00:00.000Z"),
+        _assistant("B0", "h2", "k2", "claude-fable-5", 5, "2026-09-14T12:30:00.000Z"),
+    ])
+    cowork = tmp_path / "Claude" / "local-agent-mode-sessions"
+    folder = cowork / "acct" / "org" / "local_c" / ".claude" / "projects" / "p"
+    _write(folder / "T1.jsonl", [
+        _assistant("T1", "c1", "j1", "claude-sonnet-5", 60, "2026-09-12T11:00:00.000Z", entry="local-agent"),
+    ])
+    _write(folder / "T2.jsonl", [
+        _assistant("T2", "c2", "j2", "claude-sonnet-5", 6, "2026-09-14T13:00:00.000Z", entry="local-agent"),
+    ])
+    for path in (*agents, code / "proj" / "A0.jsonl", folder / "T1.jsonl"):
+        _touch(path, "2026-09-12")
+    for path in (main, code / "proj" / "B0.jsonl", folder / "T2.jsonl"):
+        _touch(path, "2026-09-14")
+    roots = roots_for_paths([str(code), str(cowork)])
+
+    everything, _ = discover_sessions(roots)
+    listed, _ = discover_sessions(roots, since=date(2026, 9, 14))
+    assert set(listed) == {"L1", "B0", "local_c"}
+    for sid, session in listed.items():
+        assert session.calls == everything[sid].calls, sid
+    assert len(listed["L1"].calls) == 4 and listed["L1"].cost(table) == (220.0, 0)
+    assert listed["L1"].main_model(table) == "claude-fable-5-1"
+    assert len(listed["B0"].calls) == 1 and len(listed["local_c"].calls) == 2
+
+    sheet = tmp_path / "s.csv"
+    prices = _prices(tmp_path / "prices.json")
+    args = ["sessions", "list", "--since", "2026-09-14", "--out", str(sheet), "--prices", str(prices),
+            "--path", str(code), "--path", str(cowork)]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert "3 sessions with model calls active on or after 2026-09-14, read from 7 transcripts" in out
+    row = next(r for r in read_sheet(sheet) if r["session_id"] == "L1")
+    assert (row["calls"], row["api_cost_usd"], row["main_model"]) == ("4", "220.00", "claude-fable-5-1")
+
+
+@pytest.fixture
+def east_of_utc(monkeypatch):
+    """Local time two hours ahead of UTC, as in Paris in summer. Windows has no
+    time.tzset: there the machine's own time zone applies."""
+    if not hasattr(time, "tzset"):
+        yield
+        return
+    monkeypatch.setenv("TZ", "CEST-2")  # POSIX sign convention: two hours east of UTC
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_since_is_a_local_date(tmp_path, east_of_utc):
+    """--since counts days in local time, as the sheet shows them: a session
+    ending half an hour after local midnight on the date is kept, one ending
+    half an hour before it is not."""
+    midnight = datetime(2026, 9, 14).astimezone()
+    code = tmp_path / "projects"
+    for sid, minutes in (("AFTER", 30), ("BEFORE", -30)):
+        end = (midnight + timedelta(minutes=minutes)).astimezone(timezone.utc)
+        stamp = end.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        _write(code / "p" / f"{sid}.jsonl", [_assistant(sid, sid, sid, "claude-sonnet-5", 5, stamp)])
+    sessions, _ = discover_sessions(roots_for_paths([str(code)]), since=date(2026, 9, 14))
+    assert set(sessions) == {"AFTER"}
 
 
 def test_sheet_round_trip_with_excel_semicolons_and_merge(roots, table, tmp_path):
