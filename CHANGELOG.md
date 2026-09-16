@@ -6,6 +6,17 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Changed
+- README: each way in ends with its own report command, because `cpt sessions import` writes
+  `sessions-log.jsonl` and `sessions-labels.jsonl` while `cpt report` reads `cpt-log.jsonl` and
+  `cpt-labels.jsonl` by default; task, attempt, step, leak, harness and shadow cost are defined
+  where they first appear; `python -m cost_per_task.cli` is named as the fallback when `cpt` is
+  not on PATH; each Get started block opens with who it is for; the directory tree stops at the
+  top level.
+- The Claude sessions guide shows the report command with the sessions file names, and its
+  compare command no longer needs a copy of the repository for `--prices`. The testing guide's
+  Level 3 states what changes for sessions users.
+
 ### Fixed
 - `cpt sessions list --since` left out transcripts last written before the date, so a session
   started earlier and still active after it lost its older sub-agent transcripts (in Cowork, its

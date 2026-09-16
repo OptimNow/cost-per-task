@@ -92,16 +92,25 @@ python -m cost_per_task.cli sessions import
 ```
 
 This adds the usage of every session you gave a task to `sessions-log.jsonl`, and
-your outcomes to `sessions-labels.jsonl`. It prints the report command to run next,
-with the harness already filled in from the products and Claude Code versions it saw.
-Running the import again adds only sessions not yet imported, and updates outcomes you
-changed. The report is read exactly as in the [testing guide](testing-guide.md).
+your outcomes to `sessions-labels.jsonl`. These are not the files the proxy writes
+(`cpt-log.jsonl` and `cpt-labels.jsonl`), so the report command names them:
+
+```
+python -m cost_per_task.cli report --log sessions-log.jsonl --labels sessions-labels.jsonl --cleanup-cost 25 --seed 1
+```
+
+The import prints this command for you, with `--harness` already filled in from the
+products and Claude Code versions it saw; keep that part, because the disclosure
+checklist needs it. `--cleanup-cost` is what one leaked failure costs you to repair, in
+the currency of the price table; 25 is a placeholder. Running the import again adds only
+sessions not yet imported, and updates outcomes you changed. The report is read exactly
+as in the [testing guide](testing-guide.md).
 
 To compare two models on real work, label sessions of the same `task_type` done on
 each model, then:
 
 ```
-python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log sessions-log.jsonl --labels sessions-labels.jsonl --prices prices/anthropic.json --seed 1
+python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log sessions-log.jsonl --labels sessions-labels.jsonl --seed 1
 ```
 
 A session that switched models is attributed to the model with the largest share of

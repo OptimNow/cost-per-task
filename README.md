@@ -26,33 +26,74 @@
 pip install cost-per-task
 ```
 
-Python 3.11 or later, no runtime dependencies, dated price tables included. Then pick the way
-in that matches how you work:
+Python 3.11 or later, no runtime dependencies, dated price tables included. If `cpt` is not
+found after the install, the Python Scripts folder is not on your PATH, which is common on
+Windows. `python -m cost_per_task.cli` is the same command: `python -m cost_per_task.cli report`
+does what `cpt report` does.
+
+Four words the commands and the report use:
+
+- **Task**: a job to be done, such as fixing issue 142.
+- **Attempt**: one try at a task, such as one Claude Code or Cowork session or one `cpt run`.
+- **Step**: one model call inside an attempt.
+- **Leak**: a result accepted as a pass and later found to be wrong.
+
+Then pick the block that matches how you work:
 
 <img src="https://img.shields.io/badge/-Claude%20Code%20%26%20Cowork-D97757?logo=anthropic&logoColor=white" alt="Claude Code and Cowork" height="22"/><br>
-`cpt sessions list`, fill in the sheet it writes, then `cpt sessions import`. Measures the
-sessions already on your computer from their transcripts, with no proxy, no API key and no
-extra spend. [Guide](docs/claude-sessions.md)
-
-<img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
-`cpt run --task-id issue-142 -- <the command that starts your agent>`. A local proxy records
-every Anthropic, OpenAI or OpenRouter call the agent makes, streaming included, with no change
-to the agent.
-
-<img src="https://img.shields.io/badge/-Langfuse%20%2F%20LiteLLM-555555" alt="Langfuse or LiteLLM" height="22"/><br>
-`cpt import langfuse observations.json` or `cpt import litellm spend_logs.jsonl`, to reuse
-usage you already log.
-
-<img src="https://img.shields.io/badge/-MCP%20server-7C3AED" alt="MCP server" height="22"/><br>
-`pip install "cost-per-task[mcp]"`, then `cpt mcp`, so an AI assistant or the OptimNow AI ROI
-Calculator can read the report.
-
-Every way in ends the same way: label the outcomes, then read the report.
+**You use Claude Code or Cowork.** Measure the sessions already on your computer, with no
+proxy, no API key and no extra spend:
 
 ```
+cpt sessions list
+cpt sessions import
+cpt report --log sessions-log.jsonl --labels sessions-labels.jsonl --cleanup-cost 25
+```
+
+The first command writes a sheet: give each session a task name and pass or fail, then run
+the import. The sheet is the labelling step, and the import writes its own log and labels
+files, which is why the report names them. The import prints the report command for you.
+[Guide](docs/claude-sessions.md)
+
+<img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
+**You run your own agent** against Anthropic, OpenAI or OpenRouter. Start it through the
+local proxy, label the attempt, read the report:
+
+```
+cpt run --task-id issue-142 -- <the command that starts your agent>
 cpt label pass --task issue-142
 cpt report --cleanup-cost 25
 ```
+
+The proxy records every model call the agent makes, streaming included, with no change to
+the agent. Each `cpt run` is one attempt.
+
+<img src="https://img.shields.io/badge/-Langfuse%20%2F%20LiteLLM-555555" alt="Langfuse or LiteLLM" height="22"/><br>
+**You already log usage in Langfuse or LiteLLM.** Import the export, label the attempts in
+bulk from a CSV, read the report:
+
+```
+cpt import langfuse observations.json    # or: cpt import litellm spend_logs.jsonl
+cpt label --import labels.csv
+cpt report --cleanup-cost 25
+```
+
+A Langfuse session becomes a task and each trace an attempt; LiteLLM rows are grouped by
+`metadata.task_id` and `session_id` (`--task-field` and `--attempt-field` change this). The
+CSV needs the columns `task_id`, `attempt_id`, `outcome` and `leaked`.
+
+<img src="https://img.shields.io/badge/-MCP%20server-7C3AED" alt="MCP server" height="22"/><br>
+**You want an AI assistant to read the report.** Install the optional extra and start the
+MCP server:
+
+```
+pip install "cost-per-task[mcp]"
+cpt mcp
+```
+
+The assistant, or the [OptimNow AI ROI Calculator](https://airoicalculator.optimnow.io), then
+reads the same figures from your log. The tools take the log and labels file names, so the
+sessions files work too.
 
 `cpt sessions` and the bundled price tables need version 0.5.0 or later. To work from a copy
 of this repository instead, run `pip install -e .` in its folder. For a first run,
@@ -82,9 +123,9 @@ Helicone, Langfuse and OpenTelemetry. The missing half was attempts, outcomes, t
 by the success rate and the risk term. This tool supplies that half, for any model.
 
 **Who it is for:** FinOps and finance teams who need a defensible cost per unit of AI work,
-engineers comparing two models on a real workload, and anyone publishing agent cost figures
-who wants them to carry the disclosures that make them checkable. If you can run a command
-in a terminal, you can use it.
+and engineers comparing two models on a real workload. It also serves anyone publishing agent
+cost figures who wants them to carry the disclosures that make them checkable. If you can run
+a command in a terminal, you can use it.
 
 ---
 
@@ -138,8 +179,9 @@ Per model and per task type, the paper's estimators and what each one tells you:
 
 Every report ends with the paper's **disclosure checklist**: model versions, prices with
 dates and source, harness, cache hit rate, effort settings, sample size and k, the intervals
-used, leak rate, the cleanup cost assumed, and K* for comparisons. With these attached, a
-cost figure becomes a measurement someone else can check.
+used, leak rate, the cleanup cost assumed, and K* for comparisons. The harness is the product
+and settings the agent ran under, such as Claude Code 2.1 in print mode. With these attached,
+a cost figure becomes a measurement someone else can check.
 
 To compare two models directly:
 
@@ -151,10 +193,10 @@ cpt compare claude-haiku-4-5 claude-sonnet-5 --cleanup-cost 25
 
 ## How it works
 
-**Three ways in, one log.** Whatever the source, each model call becomes one line in a JSONL
-log: token counts by class, model, provider, task and attempt ids, tool names, latency and
-the effort level requested. Outcomes go to a separate labels file, so the usage log is never
-rewritten.
+**Three ways in, one log.** Whatever the source, each model call (a step) becomes one line in
+a JSONL log. The line holds token counts by class, model, provider, task and attempt ids,
+tool names, latency and the effort level requested. Outcomes go to a separate labels file, so
+the usage log is never rewritten.
 
 - **Local proxy.** `cpt run` starts a small web server on your machine and points the agent
   at it through `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`, the standard variables every SDK
@@ -184,7 +226,7 @@ attributed to the model carrying the largest share of the cost.
 | **Anthropic** | proxy, any Claude model, plain or streaming | cache reads and 5-minute and 1-hour cache writes priced separately; reasoning billed inside output |
 | **OpenAI** | proxy, Chat Completions and Responses APIs, plain or streaming | reasoning tokens split out of output; `stream_options.include_usage` added so streams report usage |
 | **OpenRouter** and other OpenAI-compatible gateways | proxy, `--openai-upstream https://openrouter.ai/api` | native counts and the charged cost requested, then reconciled against list price; covers Gemini, Grok, Mistral, DeepSeek and the rest of what the gateway routes |
-| **Claude Code and Cowork** | `cpt sessions list`, then `cpt sessions import` | transcripts read from disk; subscription use is priced as a shadow cost at API list prices |
+| **Claude Code and Cowork** | `cpt sessions list`, then `cpt sessions import` | transcripts read from disk; subscription use is priced as a shadow cost, what the same tokens would cost at API list prices, since a subscription is not billed per token |
 | **Langfuse** | `cpt import langfuse` | session as task and trace as attempt by default |
 | **LiteLLM** | `cpt import litellm` | spend logs carry no cache breakdown, so imports show 0% cache hits |
 
@@ -201,16 +243,18 @@ labels, report and comparison are model-agnostic already.
 | `cpt run --task-id T [--task-type X] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id |
 | `cpt serve --port 4000 --task-id T` | run the proxy on its own and point any process at it |
 | `cpt label pass\|fail [--task T] [--attempt A] [--leak]` | label the latest or a named attempt; `--import labels.csv` labels in bulk |
-| `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet |
+| `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet; writes `sessions-log.jsonl` and `sessions-labels.jsonl` |
 | `cpt import langfuse\|litellm FILE` | convert a usage export into cpt records |
 | `cpt report [--cleanup-cost K] [--harness H] [--json]` | the report, per model and task type |
 | `cpt compare A B [--cleanup-cost K] [--json]` | two-model comparison with the break-even cleanup cost K* |
 | `cpt prices refresh --provider anthropic\|openai [--write]` | compare a price table with the OptimNow AI Pricing Hub; write only when asked |
 | `cpt mcp` | serve the report to AI assistants over MCP (optional extra) |
 
-Useful options on `report` and `compare`: `--prices` to use your own tables (repeatable),
-`--leak-rate` to override the measured L, `--retry-cap N`, `--k`, `--seed` for reproducible
-bootstrap intervals, `--task-type` to filter and `--by-model-only` to ignore task types.
+Useful options on `report` and `compare`: `--log` and `--labels` to read other files than
+`cpt-log.jsonl` and `cpt-labels.jsonl`, and `--prices` to use your own tables (repeatable).
+`--leak-rate` overrides the measured L, `--retry-cap N` and `--k` set N and k, and `--seed`
+makes the bootstrap intervals reproducible. `--task-type` keeps one task type, and on
+`report` `--by-model-only` ignores task types.
 
 ---
 
@@ -266,7 +310,7 @@ those thresholds the report understates cost, and it states which prices it appl
 
 `cpt report --json` and `cpt compare --json` emit the summaries as JSON. The same figures are
 available over MCP, so an assistant can answer "what does a solved ticket cost us on Sonnet,
-with the interval?" from your own log, and the
+with the interval?" from your own log. The
 [OptimNow AI ROI Calculator](https://airoicalculator.optimnow.io) can use CPT_risk as its cost
 denominator instead of a per-token guess:
 
@@ -293,23 +337,12 @@ cost-per-task/
 ├── docs/                     <- Testing guide, Claude Code and Cowork guide
 ├── examples/                 <- Scripts and tasks used by the testing guide
 ├── prices/                   <- Dated price tables, shipped inside the package too
-├── src/cost_per_task/
-│   ├── proxy.py              <- The local capture proxy
-│   ├── providers/            <- Per-vendor usage extraction (anthropic.py, openai.py)
-│   ├── importers/            <- Langfuse, LiteLLM, Claude Code and Cowork sessions
-│   ├── schema.py             <- The JSONL record, aligned with OpenTelemetry GenAI
-│   ├── labels.py             <- Pass, fail and leak labels, CSV import
-│   ├── pricing.py            <- Dated tables and per-call cost
-│   ├── prices_hub.py         <- Price refresh from the OptimNow AI Pricing Hub
-│   ├── stats.py              <- Wilson, bootstrap, percentiles, p_N, pass^k
-│   ├── metrics.py            <- Attempts, groups, CPT_solved, CPT_risk, K*
-│   ├── report.py             <- Text and JSON report, disclosure checklist
-│   ├── analysis.py           <- Shared loader for the CLI and the MCP server
-│   ├── mcp_server.py         <- MCP tools (optional extra)
-│   └── cli.py                <- The cpt command
+├── src/cost_per_task/        <- The package: proxy, provider adapters, importers, pricing, statistics, report, cli
 ├── tests/                    <- pytest; proxy tests run against fake vendor servers
 └── .github/workflows/        <- CI, and the PyPI release on version tags
 ```
+
+[CLAUDE.md](CLAUDE.md) lists every module in `src/cost_per_task/` with its role.
 
 ---
 

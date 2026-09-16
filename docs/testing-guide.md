@@ -203,7 +203,10 @@ mechanism working on a real agent; it cannot crown a winner. That is Level 3's j
 
 If your real work already runs in Claude Code or Cowork, you do not need the proxy
 or an API key for this level: [claude-sessions.md](claude-sessions.md) measures the
-sessions already on your computer, and the protocol below applies unchanged.
+sessions already on your computer, and the protocol below applies with two
+differences. You label in the sheet rather than with `cpt label` (step 4), and the
+report and compare commands take `--log sessions-log.jsonl --labels sessions-labels.jsonl`,
+because the import writes its own files.
 
 Levels 1 and 2 prove the tool. Level 3 produces a number you could put in front of
 a client. The paper's protocol, applied:
@@ -265,7 +268,7 @@ third model such as Sonnet 5 to see where the cheaper tier stops being cheaper.
 
 ## What to keep from a run
 
-For your own records, and for anyone who wants to check the result: the two files
-level's log and labels files, the `prices\anthropic.json` used, and the
-full text of `cpt report` and `cpt compare`. Together they let someone reproduce
+For your own records, and for anyone who wants to check the result: the level's log
+and labels files, the `prices\anthropic.json` used, and the full text of `cpt report`
+and `cpt compare`. Together they let someone reproduce
 every number in the report; `--seed 1` makes the bootstrap intervals reproducible too.
