@@ -44,6 +44,64 @@ The price tables come with it. To work from a copy of the repository instead, ru
 `python -m pip install -e .` in its folder. Either way, the commands below run from any
 folder.
 
+## Quick path
+
+Six commands, run from a folder of your own (they write their files there), in
+PowerShell or any terminal. `cpt` and `python -m cost_per_task.cli` are the same
+command. Under each one, what you should see.
+
+1. **The overview, before any labelling.**
+   ```
+   cpt sessions summary --since 2026-09-01 --subscription 180
+   ```
+   The number of sessions and model calls, the cost at API list prices, the tokens by
+   class with the share read from cache, then four tables: by product, by model, by
+   month with the cost as a multiple of your subscription, and the five most expensive
+   sessions. Nothing is written to disk.
+
+2. **The sheet.**
+   ```
+   cpt sessions list
+   ```
+   `wrote sessions.csv: N rows`. One row per session, newest first.
+
+3. **Label in Excel.** Open `sessions.csv`; for the sessions you want to measure, fill
+   `task` (the same name for sessions that attempted the same job), `task_type` (for
+   example `code`, `analysis`, `writing`), `outcome` (`pass` or `fail`) and, if you later
+   found an accepted result wrong, `leaked` (`yes`). Save as CSV and close Excel.
+
+4. **The import.**
+   ```
+   cpt sessions import
+   ```
+   `imported N sessions (M model calls) into cpt-log.jsonl; N labels written to
+   cpt-labels.jsonl`, followed by the report command with `--harness` already filled in.
+   Copy that command.
+
+5. **The report.** The printed command, or:
+   ```
+   cpt report --cleanup-cost 25 --seed 1
+   ```
+   One group per model and task type. `CPT_solved` is the headline: the cost per solved
+   task, failed attempts included. With few sessions the intervals are wide; that is the
+   tool telling you how little the sample proves. The report prints to the screen; keep it
+   with `cpt report --cleanup-cost 25 --seed 1 | Out-File -Encoding utf8 report.txt`
+   (PowerShell) or `> report.txt` elsewhere, or add `--json`.
+
+6. **Where one session's money went.** The first characters of its id, from the sheet or
+   the summary, are enough:
+   ```
+   cpt explain --attempt 18645423
+   ```
+   The cost by token class, by model when several were used, and the most expensive steps
+   with their tools.
+
+What to look for: fresh input is a rounding error; the cost is cache writes (tool
+outputs added to the context), cache reads (the whole history re-read at every call) and
+output, which includes thinking. Long sessions cost far more than short ones on the same
+model, high effort levels show up as output, and P90 is the budgeting figure, not the
+mean.
+
 ## First look: what your sessions would cost
 
 Before labelling anything:
