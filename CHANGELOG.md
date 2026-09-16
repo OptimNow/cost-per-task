@@ -6,6 +6,37 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Added
+- `cpt sessions summary`: what the Claude Code and Cowork sessions on the computer would cost at
+  API list prices, by product, model and period (day, week or month), with the token classes,
+  the cache hit rate and the most expensive sessions. `--subscription PRICE` shows each month as
+  a multiple of a monthly subscription. No labelling needed.
+- `cpt explain`: where one attempt's cost went, by token class (input, cache reads, cache writes,
+  output, reasoning), by model when several were used, and the most expensive steps. The attempt
+  is named by its id or a unique prefix of it, or defaults to the latest one in the log.
+
+### Changed
+- `cpt sessions import` writes to `cpt-log.jsonl` and `cpt-labels.jsonl`, the files every other
+  command reads by default, so `cpt report` works right after an import with no options. A folder
+  holding only the 0.5.0 files (`sessions-log.jsonl`, `sessions-labels.jsonl`) keeps using them,
+  with a message; `--log` and `--labels` still choose.
+- The report command printed after an import no longer names a price table: the shipped tables
+  apply by default.
+- README: each Get started block opens with who it is for and ends with its own report command;
+  task, attempt, step, leak, harness and shadow cost are defined where they first appear;
+  `python -m cost_per_task.cli` is named as the fallback when `cpt` is not on PATH; the directory
+  tree stops at the top level.
+- The Claude sessions guide's compare command no longer needs a copy of the repository for
+  `--prices`, and the testing guide's Level 3 states what changes for sessions users.
+
+### Documentation
+- Long context is no longer listed as a cause of understated cost for Claude: Anthropic bills
+  Claude 4.6 and later models at the standard rate over the full 1M-token window (pricing page,
+  read on 2026-09-14). The limitation still holds for OpenAI's GPT-5.5 and GPT-5.4 above 272K
+  input tokens.
+- The Claude Code and Cowork guide states that web searches run outside the transcripts, so
+  their tokens and the search fee are not in a session's cost.
+
 ### Fixed
 - `cpt sessions list --since` left out transcripts last written before the date, so a session
   started earlier and still active after it lost its older sub-agent transcripts (in Cowork, its

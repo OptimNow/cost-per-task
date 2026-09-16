@@ -9,8 +9,9 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections.abc import Iterable
+from datetime import datetime
 
-from .metrics import Attempt, GroupSummary, break_even_cleanup_cost
+from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost
 from .pricing import PricingTable
 
 
@@ -289,4 +290,79 @@ def render_comparison(
             )
     lines.append("")
     lines.extend(_checklist([a, b], table, harness=harness, break_even=(a.model, b.model, k_star)))
+    return "\n".join(lines)
+
+
+def _local_time(timestamp: str) -> str:
+    try:
+        return datetime.fromisoformat(timestamp).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return timestamp or "-"
+
+
+def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: int = 10) -> str:
+    """Where one attempt's cost went: by token class, by model when several
+    were used, and the most expensive steps."""
+    a = explanation.attempt
+    currency = table.currency
+    others = sorted(a.models - {a.model})
+    outcome = (a.outcome or "unlabelled") + ("+leak" if a.leaked else "")
+    lines = [
+        f"attempt {a.attempt_id}",
+        f"  task {a.task_id}"
+        + (f" [{a.task_type}]" if a.task_type else "")
+        + f"; outcome {outcome}; started {_local_time(a.first_timestamp)}",
+        f"  model {a.model}"
+        + (f" (also {', '.join(others)})" if others else "")
+        + f"; steps {a.steps}; tool calls {a.tool_calls}"
+        + f"; effort {', '.join(sorted(a.efforts)) or 'not recorded'}",
+        f"  cost C: {_money(a.cost, currency)} at prices of {table.as_of}",
+    ]
+    if a.unpriced_steps:
+        lines.append(f"  warning: {a.unpriced_steps} steps had no price and count as zero cost")
+    if a.cache_hit_rate is not None:
+        lines.append(
+            f"  cache hit rate: {100 * a.cache_hit_rate:.1f}% of prompt tokens were read from cache"
+        )
+
+    total = sum(c.cost for c in explanation.classes)
+    rate_title = f"{currency}/MTok"
+    header = f"  {'class':<15} {'tokens':>13} {rate_title:>9} {'cost':>12} {'share':>7}"
+    lines += ["", "by token class", header, "  " + "-" * (len(header) - 2)]
+    for c in explanation.classes:
+        rate = f"{1_000_000 * c.cost / c.tokens:.2f}" if c.tokens else "-"
+        share = f"{100 * c.cost / total:.1f}%" if total else "-"
+        lines.append(f"  {c.label:<15} {c.tokens:>13,} {rate:>9} {c.cost:>12.4f} {share:>7}")
+    all_tokens = sum(c.tokens for c in explanation.classes)
+    total_share = "100.0%" if total else "-"
+    lines.append(f"  {'total':<15} {all_tokens:>13,} {'':>9} {total:>12.4f} {total_share:>7}")
+    if others:
+        lines.append(f"  {rate_title} is the average over the models used")
+        lines += ["", "by model"]
+        for model, steps, cost in explanation.by_model:
+            share = f"{100 * cost / total:.1f}%" if total else "-"
+            lines.append(f"  {model:<30} {steps:>6} steps {cost:>12.4f} {share:>7}")
+
+    if top_steps > 0 and explanation.steps:
+        shown = min(top_steps, len(explanation.steps))
+        ranked = sorted(explanation.steps, key=lambda s: -(s.cost or 0.0))[:shown]
+        header = (
+            f"  {'step':>5} {'time':<19} {'model':<24} {'prompt':>10} {'output':>8} {'cost':>10}  tools"
+        )
+        lines += [
+            "",
+            f"most expensive steps ({shown} of {len(explanation.steps)})",
+            header,
+            "  " + "-" * (len(header) - 2),
+        ]
+        for s in ranked:
+            tools = ", ".join(s.tool_names[:3]) + (" ..." if len(s.tool_names) > 3 else "")
+            cost = f"{s.cost:.4f}" if s.cost is not None else "unpriced"
+            lines.append(
+                f"  {s.step_id:>5} {_local_time(s.timestamp):<19} {s.model[:24]:<24} "
+                f"{s.prompt_tokens:>10,} {s.output_tokens:>8,} {cost:>10}  {tools}"
+            )
+    if explanation.largest_prompt is not None:
+        largest = explanation.largest_prompt
+        lines += ["", f"largest prompt: {largest.prompt_tokens:,} tokens at step {largest.step_id}"]
     return "\n".join(lines)

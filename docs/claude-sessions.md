@@ -44,6 +44,26 @@ The price tables come with it. To work from a copy of the repository instead, ru
 `python -m pip install -e .` in its folder. Either way, the commands below run from any
 folder.
 
+## First look: what your sessions would cost
+
+Before labelling anything:
+
+```
+python -m cost_per_task.cli sessions summary --since 2026-09-01 --subscription 180
+```
+
+This reads every transcript and prints the sessions active on or after the date: their
+number, their model calls, the tokens by class with the share read from cache, and the cost
+at API list prices, split by product (Claude Code desktop, Claude Code CLI, Cowork), by
+model and by month, then the five most expensive sessions. With `--subscription`, the
+monthly price of your plan, each month also shows the list-price cost as a multiple of it:
+`5.8x` means the month's usage would have cost 5.8 subscriptions on the API.
+
+`--by day` or `--by week` changes the period, `--top 10` lengthens the last table and
+`--top 0` drops it. Sessions are kept whole: a session started before the date and still
+active after it appears with all its calls, and its earlier calls land in their own
+period rows. Read the month row for a calendar month.
+
 ## Step 1: list your sessions
 
 ```
@@ -91,17 +111,39 @@ can judge honestly: an outcome you are unsure of is better left empty.
 python -m cost_per_task.cli sessions import
 ```
 
-This adds the usage of every session you gave a task to `sessions-log.jsonl`, and
-your outcomes to `sessions-labels.jsonl`. It prints the report command to run next,
-with the harness already filled in from the products and Claude Code versions it saw.
-Running the import again adds only sessions not yet imported, and updates outcomes you
-changed. The report is read exactly as in the [testing guide](testing-guide.md).
+This adds the usage of every session you gave a task to `cpt-log.jsonl`, and your
+outcomes to `cpt-labels.jsonl`, the files every other command reads by default, so the
+report needs no file options:
+
+```
+python -m cost_per_task.cli report --cleanup-cost 25 --seed 1
+```
+
+The import prints this command for you, with `--harness` already filled in from the
+products and Claude Code versions it saw; keep that part, because the disclosure
+checklist needs it. `--cleanup-cost` is what one leaked failure costs you to repair, in
+the currency of the price table; 25 is a placeholder. Running the import again adds only
+sessions not yet imported, and updates outcomes you changed; a task name changed on an
+imported session is ignored with a warning, so to rename a task delete the two files and
+import again. The report is read exactly as in the [testing guide](testing-guide.md).
+
+Version 0.5.0 wrote `sessions-log.jsonl` and `sessions-labels.jsonl`. A folder that holds
+only those keeps using them, and the import says so; rename them to the new names to run
+the report with no options.
+
+To see where one session's cost went, by token class, by model and by step:
+
+```
+python -m cost_per_task.cli explain --attempt 18645423
+```
+
+The first characters of the session id are enough when they match one session.
 
 To compare two models on real work, label sessions of the same `task_type` done on
 each model, then:
 
 ```
-python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --log sessions-log.jsonl --labels sessions-labels.jsonl --prices prices/anthropic.json --seed 1
+python -m cost_per_task.cli compare claude-fable-5 claude-fable-5-1 --seed 1
 ```
 
 A session that switched models is attributed to the model with the largest share of
@@ -116,8 +158,17 @@ what a subscription is worth to you, or to budget a move to the API. If you run 
 Code with an API key, it is your real cost before any negotiated discount.
 
 Not modelled, and reported when detected: fast mode, a priority service tier and data
-residency surcharges, all of which cost more than list price. Long-context price tiers
-and negotiated discounts are not modelled either.
+residency surcharges, all of which cost more than list price. Negotiated discounts are not
+modelled either. Long context is not a gap: Anthropic bills Claude 4.6 and later models at
+the standard rate over the whole 1M-token window (pricing page, read on 2026-09-14), so a
+session whose prompts grow past 200K tokens is priced correctly.
+
+Web searches are not in the transcripts. Claude Code's WebSearch and WebFetch tools run
+through separate requests that the transcripts do not record: on one computer, 402
+WebSearch calls appeared among the tool names while every usage block reported zero
+server-side searches. Their tokens and the API's web search fee (10 USD per 1,000
+searches; web fetch has no fee beyond tokens) are therefore missing from a session's cost,
+which is a floor by that amount.
 
 ## Limits
 

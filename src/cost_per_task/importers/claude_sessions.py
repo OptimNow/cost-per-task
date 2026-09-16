@@ -39,7 +39,7 @@ import json
 import os
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -539,3 +539,198 @@ def harness_summary(sessions: list[Session]) -> str:
         else:
             parts.append(f"{product} {found[0]} to {found[-1]}")
     return "; ".join(parts)
+
+
+@dataclass
+class SessionsSummary:
+    """Totals for ``cpt sessions summary``: the sessions kept, their calls,
+    tokens and cost at list prices, split by product, model and period."""
+
+    sessions: int
+    calls: int
+    cost: float
+    unpriced_calls: int
+    first: str  # local time of the first and last call, YYYY-MM-DD HH:MM
+    last: str
+    tokens: dict[str, int]  # input, cache_read, cache_write, output
+    by_product: list[tuple[str, int, int, float]]  # name, sessions, calls, cost
+    by_model: list[tuple[str, int, int, float]]
+    by_period: list[tuple[str, int, int, float]]
+    period: str  # day, week or month
+    top: list[tuple[Session, float]]  # the most expensive sessions first
+
+
+def _period_key(local_stamp: str, period: str) -> str:
+    day = local_stamp[:10]
+    if period == "day":
+        return day
+    if period == "week":
+        year, week, _ = date.fromisoformat(day).isocalendar()
+        return f"{year}-W{week:02d}"
+    return day[:7]
+
+
+def summarise_sessions(
+    sessions: dict[str, Session],
+    table: PricingTable,
+    *,
+    period: str = "month",
+    top: int = 5,
+) -> SessionsSummary:
+    """Add the sessions up at the table's list prices. Periods follow local
+    time, as the sheet does. A call whose model has no price counts as zero
+    and is counted in ``unpriced_calls``."""
+    if period not in ("day", "week", "month"):
+        raise ValueError(f"period must be day, week or month, got {period!r}")
+    groups: dict[str, dict[str, list]] = {
+        name: defaultdict(lambda: [set(), 0, 0.0]) for name in ("product", "model", "period")
+    }
+    tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
+    calls = unpriced = 0
+    total = 0.0
+    stamps: list[str] = []
+    ranked: list[tuple[Session, float]] = []
+    for session in sessions.values():
+        session_cost = 0.0
+        for record in session.records("-"):
+            cost = price_step(record, table)
+            if cost is None:
+                unpriced += 1
+                cost = 0.0
+            local = _local(record.timestamp)
+            keys = {
+                "product": session.product,
+                "model": record.model,
+                "period": _period_key(local, period) if local else "unknown",
+            }
+            for name, key in keys.items():
+                bucket = groups[name][key]
+                bucket[0].add(session.session_id)
+                bucket[1] += 1
+                bucket[2] += cost
+            tokens["input"] += record.input_tokens
+            tokens["cache_read"] += record.cache_read_tokens
+            tokens["cache_write"] += record.cache_write_tokens
+            tokens["output"] += record.output_tokens
+            calls += 1
+            total += cost
+            session_cost += cost
+            if local:
+                stamps.append(local)
+        ranked.append((session, session_cost))
+    ranked.sort(key=lambda item: (-item[1], item[0].started))
+
+    def rows(name: str, *, by_cost: bool) -> list[tuple[str, int, int, float]]:
+        items = [(key, len(b[0]), b[1], b[2]) for key, b in groups[name].items()]
+        return sorted(items, key=(lambda r: (-r[3], r[0])) if by_cost else (lambda r: r[0]))
+
+    return SessionsSummary(
+        sessions=len(sessions),
+        calls=calls,
+        cost=total,
+        unpriced_calls=unpriced,
+        first=min(stamps) if stamps else "",
+        last=max(stamps) if stamps else "",
+        tokens=tokens,
+        by_product=rows("product", by_cost=True),
+        by_model=rows("model", by_cost=True),
+        by_period=rows("period", by_cost=False),
+        period=period,
+        top=ranked[: max(top, 0)],
+    )
+
+
+def _tokens_text(count: int) -> str:
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 10_000:
+        return f"{count / 1_000:.0f}K"
+    return f"{count:,}"
+
+
+def _columns(headers: list[str], rows: list[list[str]], left: int = 1) -> list[str]:
+    """Aligned text columns: the first ``left`` columns left-aligned, the rest
+    right-aligned, with a rule under the headers."""
+    widths = [max(len(cell) for cell in column) for column in zip(headers, *rows)]
+
+    def fmt(cells: list[str]) -> str:
+        return "  " + "  ".join(
+            cell.ljust(width) if i < left else cell.rjust(width)
+            for i, (cell, width) in enumerate(zip(cells, widths))
+        )
+
+    rule = "  " + "-" * (sum(widths) + 2 * (len(widths) - 1))
+    return [fmt(headers), rule, *(fmt(r) for r in rows)]
+
+
+def _short_id(session_id: str) -> str:
+    return session_id if len(session_id) <= 20 else session_id[:13]
+
+
+def render_sessions_summary(
+    summary: SessionsSummary, table: PricingTable, *, subscription: float | None = None
+) -> str:
+    """The summary as text. ``subscription`` is a monthly price: the month
+    table then shows the list-price cost as a multiple of it."""
+    currency = table.currency
+    when = f", {summary.first} to {summary.last} local time" if summary.first else ""
+    lines = [
+        f"{summary.sessions} sessions, {summary.calls:,} model calls{when}",
+        f"cost at API list prices as of {table.as_of}: {summary.cost:,.2f} {currency}",
+        "  on a subscription you are not billed per token: this is a shadow cost, not a bill",
+    ]
+    if summary.unpriced_calls:
+        lines.append(f"  {summary.unpriced_calls} calls on models without a price count as zero")
+    t = summary.tokens
+    prompt = t["input"] + t["cache_read"] + t["cache_write"]
+    hit = f" ({100 * t['cache_read'] / prompt:.1f}% of prompt tokens)" if prompt else ""
+    lines.append(
+        f"tokens: input {_tokens_text(t['input'])}, cache read {_tokens_text(t['cache_read'])}{hit}, "
+        f"cache write {_tokens_text(t['cache_write'])}, output {_tokens_text(t['output'])}"
+    )
+
+    def share(cost: float) -> str:
+        return f"{100 * cost / summary.cost:.1f}%" if summary.cost else "-"
+
+    for title, rows in (("by product", summary.by_product), ("by model", summary.by_model)):
+        lines += ["", title]
+        lines += _columns(
+            [title[3:], "sessions", "calls", f"cost {currency}", "share"],
+            [[name, str(n), f"{c:,}", f"{cost:,.2f}", share(cost)] for name, n, c, cost in rows],
+        )
+
+    headers = [summary.period, "sessions", "calls", f"cost {currency}"]
+    body = [[name, str(n), f"{c:,}", f"{cost:,.2f}"] for name, n, c, cost in summary.by_period]
+    lines += ["", f"by {summary.period}"]
+    if subscription:
+        if summary.period == "month":
+            headers.append("x subscription")
+            for row, (_, _, _, cost) in zip(body, summary.by_period):
+                row.append(f"{cost / subscription:.1f}x")
+            lines.append(
+                f"  x subscription: cost at list prices as a multiple of a "
+                f"{subscription:,.2f} {currency} monthly subscription"
+            )
+        else:
+            lines.append("  the subscription multiple is shown by month: use --by month")
+    lines += _columns(headers, body)
+
+    if summary.top:
+        lines += ["", f"most expensive sessions ({len(summary.top)})"]
+        lines += _columns(
+            ["session", "product", "started", "project", "main model", "calls", f"cost {currency}"],
+            [
+                [
+                    _short_id(s.session_id),
+                    s.product,
+                    _local(s.started),
+                    s.project[:24],
+                    s.main_model(table),
+                    f"{len(s.calls):,}",
+                    f"{cost:,.2f}",
+                ]
+                for s, cost in summary.top
+            ],
+            left=5,
+        )
+    return "\n".join(lines)

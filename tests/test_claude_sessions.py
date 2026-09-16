@@ -13,11 +13,14 @@ import pytest
 
 from cost_per_task import cli
 from cost_per_task.importers.claude_sessions import (
+    _period_key,
     discover_sessions,
     harness_summary,
     import_sheet,
     read_sheet,
+    render_sessions_summary,
     roots_for_paths,
+    summarise_sessions,
     write_sheet,
 )
 from cost_per_task.pricing import PricingTable
@@ -340,3 +343,82 @@ def test_empty_inference_geo_is_not_flagged(tmp_path):
     _write(tmp_path / "projects" / "p" / "S9.jsonl", [line])
     _, stats = discover_sessions(roots_for_paths([str(tmp_path / "projects")]))
     assert stats["regional inference responses"] == 0
+
+
+def test_summary_adds_up_by_product_model_and_period(roots, table):
+    sessions, _ = discover_sessions(roots, include_titles=False)
+    summary = summarise_sessions(sessions, table, period="month", top=2)
+    assert (summary.sessions, summary.calls, summary.cost, summary.unpriced_calls) == (3, 6, 310.0, 0)
+    assert summary.tokens == {"input": 60, "cache_read": 6000, "cache_write": 1200, "output": 310}
+    assert summary.by_product == [
+        ("Claude Code desktop", 1, 3, 200.0), ("Cowork", 1, 2, 100.0), ("Claude Code CLI", 1, 1, 10.0),
+    ]
+    assert summary.by_model[0] == ("claude-fable-5", 1, 2, 150.0)
+    assert [m for m, *_ in summary.by_model] == [
+        "claude-fable-5", "claude-sonnet-5", "claude-fable-5-1", "claude-haiku-4-5",
+    ]
+    assert summary.by_period == [("2026-08", 1, 1, 10.0), ("2026-09", 2, 5, 300.0)]
+    assert [(s.session_id, cost) for s, cost in summary.top] == [("S1", 200.0), ("local_abc", 100.0)]
+
+    assert _period_key("2026-09-10 08:00", "week") == "2026-W37"
+    assert _period_key("2026-09-10 08:00", "day") == "2026-09-10"
+    by_day = summarise_sessions(sessions, table, period="day", top=0)
+    assert [p for p, *_ in by_day.by_period] == ["2026-08-01", "2026-09-10", "2026-09-11"]
+    assert by_day.top == []
+    with pytest.raises(ValueError):
+        summarise_sessions(sessions, table, period="year")
+
+    text = render_sessions_summary(summary, table, subscription=100.0)
+    assert "3 sessions, 6 model calls" in text and "310.00 USD" in text and "shadow cost" in text
+    assert "cache read 6,000 (82.6% of prompt tokens)" in text
+    assert "Claude Code desktop" in text and "64.5%" in text
+    assert "3.0x" in text and "0.1x" in text  # September and August over a 100 USD subscription
+    assert "most expensive sessions (2)" in text and "S1" in text and "local_abc" in text
+    weekly = summarise_sessions(sessions, table, period="week")
+    assert "use --by month" in render_sessions_summary(weekly, table, subscription=100.0)
+    assert "x subscription" not in render_sessions_summary(summary, table)
+
+
+def test_cli_summary(roots, tmp_path, capsys):
+    code_root, cowork_root = (str(p) for _, p in roots)
+    prices = _prices(tmp_path / "prices.json")
+    args = ["sessions", "summary", "--prices", str(prices), "--by", "day", "--top", "1",
+            "--since", "2026-09-01", "--path", code_root, "--path", cowork_root]
+    assert cli.main(args) == 0
+    captured = capsys.readouterr()
+    assert "2 sessions with model calls active on or after 2026-09-01" in captured.out
+    assert "by day" in captured.out and "2026-09-10" in captured.out
+    assert "most expensive sessions (1)" in captured.out
+    assert "fast mode" in captured.err
+    nowhere = ["sessions", "summary", "--prices", str(prices), "--path", str(tmp_path / "nowhere")]
+    assert cli.main(nowhere) == 1
+
+
+def test_import_uses_the_shared_default_files_and_the_old_ones_if_present(
+    roots, tmp_path, monkeypatch, capsys
+):
+    code_root, cowork_root = (str(p) for _, p in roots)
+    paths = ["--path", code_root, "--path", cowork_root]
+    sheet = tmp_path / "s.csv"
+    row = {"session_id": "S1", "task": "invoice-fix", "outcome": "pass"}
+    write_sheet(sheet, {}, existing={"S1": row})
+
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    monkeypatch.chdir(fresh)
+    assert cli.main(["sessions", "import", str(sheet), *paths]) == 0
+    out = capsys.readouterr().out
+    assert (fresh / "cpt-log.jsonl").exists() and (fresh / "cpt-labels.jsonl").exists()
+    assert "report --seed 1" in out and "--log" not in out
+
+    old = tmp_path / "old"
+    old.mkdir()
+    (old / "sessions-log.jsonl").touch()
+    (old / "sessions-labels.jsonl").touch()
+    monkeypatch.chdir(old)
+    assert cli.main(["sessions", "import", str(sheet), *paths]) == 0
+    captured = capsys.readouterr()
+    assert "using sessions-log.jsonl from an earlier version" in captured.err
+    assert "--log sessions-log.jsonl --labels sessions-labels.jsonl" in captured.out
+    assert len(read_jsonl(old / "sessions-log.jsonl")) == 3
+    assert not (old / "cpt-log.jsonl").exists()
