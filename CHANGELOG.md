@@ -70,6 +70,13 @@ versioning, with the minor digit bumped for any user-visible feature.
   it used to become unpriced after `--write`.
 - `as_of` and `effective_from` must be `YYYY-MM-DD` dates; anything else is rejected at load.
 
+### Fixed
+- In a folder without a log yet, `cpt report`, `tasks`, `compare`, `explain` and `label` answered
+  with the operating system's `[Errno 2] No such file or directory`. They now say that there is
+  no usage log yet, how one comes to be (an outcome in `cpt sessions label`, an import, or
+  `cpt run`) and that `--log` reads one kept elsewhere. `cpt sessions label` says that nothing
+  was written when no session got an outcome.
+
 ### Security
 - `SECURITY.md`: what the tool reads, keeps and sends, what it does not protect against, the
   settings for a sensitive environment, how releases are built, and commands to check each
