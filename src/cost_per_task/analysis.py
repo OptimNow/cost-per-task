@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from .labels import load_labels
 from .metrics import Attempt, GroupSummary, build_attempts, summarise
-from .pricing import PricingTable
+from .pricing import PricingTable, describe_usage
 from .schema import read_jsonl
 
 
@@ -23,6 +23,7 @@ def load_analysis(
     log: str,
     labels: str,
     prices: str | list[str],
+    prices_as_of: str | None = None,
     by_task_type: bool = True,
     task_type: str | None = None,
     k: int | None = None,
@@ -33,10 +34,15 @@ def load_analysis(
     seed: int | None = None,
 ) -> Analysis:
     """Raises OSError or PricingError when inputs cannot be read. ``prices``
-    may be several tables (one per vendor) merged for mixed-vendor logs."""
+    may be several tables (one per vendor) merged for mixed-vendor logs. Each
+    call is priced at the rates of its day unless ``prices_as_of`` names one
+    day (or ``latest``) for all of them."""
     paths = [prices] if isinstance(prices, str) else list(prices)
     table = PricingTable.load_many(paths)
+    if prices_as_of:
+        table.pin_to(prices_as_of)
     records = read_jsonl(log)
+    table.usage = describe_usage(records, table)
     attempts = build_attempts(records, table, load_labels(labels))
     if task_type:
         attempts = [a for a in attempts if a.task_type == task_type]

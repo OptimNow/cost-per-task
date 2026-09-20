@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from .schema import StepRecord
@@ -23,6 +24,9 @@ from .schema import StepRecord
 
 class PricingError(ValueError):
     pass
+
+
+_LATEST = "9999-12-31"  # pins a table to its newest rates
 
 
 @dataclass(frozen=True)
@@ -44,18 +48,80 @@ _REQUIRED_RATES = (
 )
 
 
+@dataclass(frozen=True)
+class DatedRates:
+    """One model's rates in one snapshot. ``effective`` is the day the rates
+    apply from (the snapshot's ``effective_from``, else its ``as_of``);
+    ``as_of`` is the day they were read."""
+
+    effective: str
+    as_of: str
+    rates: ModelRates
+
+
+def _check_date(value, what: str) -> str:
+    try:
+        return date.fromisoformat(str(value)).isoformat()
+    except ValueError:
+        raise PricingError(f"{what} must be a YYYY-MM-DD date, got {value!r}") from None
+
+
+def _parse_models(raw: dict) -> dict[str, ModelRates]:
+    models: dict[str, ModelRates] = {}
+    for model_id, rates in raw.items():
+        values = {}
+        for rate_key in _REQUIRED_RATES:
+            value = rates.get(rate_key)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise PricingError(
+                    f"model '{model_id}': '{rate_key}' must be a number, got {value!r}"
+                )
+            values[rate_key] = float(value)
+        reasoning = rates.get("reasoning_per_mtok")
+        if reasoning is not None and not isinstance(reasoning, (int, float)):
+            raise PricingError(
+                f"model '{model_id}': 'reasoning_per_mtok' must be a number or null"
+            )
+        models[model_id] = ModelRates(
+            reasoning_per_mtok=None if reasoning is None else float(reasoning), **values
+        )
+    return models
+
+
+def _compact(entries: list[DatedRates], model: str) -> list[DatedRates]:
+    """Oldest first. A snapshot that repeats the previous rates adds nothing,
+    so the earlier date stands; two rates for one day cannot both be right."""
+    kept: list[DatedRates] = []
+    for entry in sorted(entries, key=lambda e: (e.effective, e.as_of)):
+        if kept and kept[-1].rates == entry.rates:
+            continue
+        if kept and kept[-1].effective == entry.effective:
+            raise PricingError(f"model '{model}' has two different prices for {entry.effective}")
+        kept.append(entry)
+    return kept
+
+
 class PricingTable:
+    """The current rates plus every earlier snapshot kept under ``history``.
+    A call is priced with the rates in force on its day (``rates_for`` with
+    ``at``), unless the table is pinned to one date with ``pin_to``."""
+
     def __init__(
         self,
         currency: str,
         as_of: str,
         models: dict[str, ModelRates],
         source: str | None = None,
+        history: dict[str, list[DatedRates]] | None = None,
     ) -> None:
         self.currency = currency
         self.as_of = as_of
-        self.models = models
         self.source = source
+        self.history = history or {m: [DatedRates(as_of, as_of, r)] for m, r in models.items()}
+        # Latest known rates per model; a model a later snapshot dropped keeps its last ones.
+        self.models = {model: entries[-1].rates for model, entries in self.history.items()}
+        self.pinned: str | None = None
+        self.usage: PriceUsage | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "PricingTable":
@@ -63,25 +129,24 @@ class PricingTable:
         for key in ("currency", "as_of", "models"):
             if not data.get(key):
                 raise PricingError(f"pricing table is missing required field '{key}'")
-        models: dict[str, ModelRates] = {}
-        for model_id, rates in data["models"].items():
-            values = {}
-            for rate_key in _REQUIRED_RATES:
-                value = rates.get(rate_key)
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    raise PricingError(
-                        f"model '{model_id}': '{rate_key}' must be a number, got {value!r}"
-                    )
-                values[rate_key] = float(value)
-            reasoning = rates.get("reasoning_per_mtok")
-            if reasoning is not None and not isinstance(reasoning, (int, float)):
-                raise PricingError(
-                    f"model '{model_id}': 'reasoning_per_mtok' must be a number or null"
-                )
-            models[model_id] = ModelRates(
-                reasoning_per_mtok=None if reasoning is None else float(reasoning), **values
-            )
-        return cls(data["currency"], data["as_of"], models, data.get("source"))
+        snapshots = [data, *(data.get("history") or [])]
+        entries: dict[str, list[DatedRates]] = defaultdict(list)
+        for snapshot in snapshots:
+            if not isinstance(snapshot, dict) or not snapshot.get("as_of"):
+                raise PricingError("every entry under 'history' needs an 'as_of' date")
+            as_of = _check_date(snapshot["as_of"], "'as_of'")
+            effective = as_of
+            if snapshot.get("effective_from"):
+                effective = _check_date(snapshot["effective_from"], "'effective_from'")
+            for model, rates in _parse_models(snapshot.get("models") or {}).items():
+                entries[model].append(DatedRates(effective, as_of, rates))
+        history = {model: _compact(found, model) for model, found in entries.items()}
+        return cls(data["currency"], data["as_of"], {}, data.get("source"), history)
+
+    def pin_to(self, day: str) -> None:
+        """Price every call as of one day, whatever its own date: ``latest``
+        is today's rates, the way the table worked before snapshots."""
+        self.pinned = _LATEST if day == "latest" else _check_date(day, "--prices-as-of")
 
     @classmethod
     def load_many(cls, paths: list[str | Path]) -> "PricingTable":
@@ -98,19 +163,22 @@ class PricingTable:
         if len(currencies) > 1:
             raise PricingError(f"pricing tables use different currencies: {sorted(currencies)}")
         models: dict[str, ModelRates] = {}
+        entries: dict[str, list[DatedRates]] = defaultdict(list)
         for table in tables:
             for model, rates in table.models.items():
                 if model in models and models[model] != rates:
                     raise PricingError(f"model '{model}' is priced differently in two tables")
                 models[model] = rates
+                entries[model].extend(table.history[model])
         return cls(
             tables[0].currency,
             min(t.as_of for t in tables),
-            models,
+            {},
             " | ".join(t.source for t in tables if t.source) or None,
+            {model: _compact(found, model) for model, found in entries.items()},
         )
 
-    def rates_for(self, model: str) -> ModelRates | None:
+    def _key_for(self, model: str) -> str | None:
         """Exact match first, then the longest key the model id starts with,
         so a dated id like claude-sonnet-5-20250929 finds claude-sonnet-5.
         Gateway ids such as anthropic/claude-haiku-4.5 (OpenRouter) are tried
@@ -121,21 +189,79 @@ class PricingTable:
             candidates.extend([suffix, suffix.replace(".", "-")])
         for candidate in candidates:
             if candidate in self.models:
-                return self.models[candidate]
+                return candidate
             best = None
             for key in self.models:
                 if candidate.startswith(key) and (best is None or len(key) > len(best)):
                     best = key
             if best:
-                return self.models[best]
+                return best
         return None
+
+    def dated_rates_for(self, model: str, at: str | None = None) -> tuple[DatedRates, bool] | None:
+        """The snapshot entry that prices ``model`` for a call made at ``at``
+        (an ISO timestamp): the latest one in force that day. The flag is true
+        when the call is older than the model's first snapshot, which then
+        prices it for want of anything earlier. Without ``at``: latest rates."""
+        key = self._key_for(model)
+        if key is None:
+            return None
+        entries = self.history[key]
+        day = self.pinned or (at[:10] if at else None)
+        if day is None:
+            return entries[-1], False
+        in_force = [entry for entry in entries if entry.effective <= day]
+        if in_force:
+            return in_force[-1], False
+        return entries[0], self.pinned is None
+
+    def rates_for(self, model: str, at: str | None = None) -> ModelRates | None:
+        found = self.dated_rates_for(model, at)
+        return None if found is None else found[0].rates
+
+
+@dataclass
+class PriceUsage:
+    """Which snapshots priced a set of calls, for the disclosure checklist."""
+
+    snapshots: dict[str, int]  # snapshot as_of -> calls it priced
+    predating: int  # calls older than their model's first snapshot
+    pinned: str | None = None
+
+
+def describe_usage(records: list[StepRecord], table: PricingTable) -> PriceUsage:
+    snapshots: dict[str, int] = defaultdict(int)
+    predating = 0
+    for record in records:
+        found = table.dated_rates_for(record.model, record.timestamp)
+        if found is not None:
+            snapshots[found[0].as_of] += 1
+            predating += found[1]
+    pinned = "latest" if table.pinned == _LATEST else table.pinned
+    return PriceUsage(dict(sorted(snapshots.items())), predating, pinned)
+
+
+def prices_line(table: PricingTable) -> str:
+    """The prices entry of the disclosure: one date when one snapshot did all
+    the pricing, otherwise each snapshot with the calls it priced."""
+    usage = table.usage
+    if usage is not None and usage.pinned:
+        day = "the latest rates" if usage.pinned == "latest" else f"the rates of {usage.pinned}"
+        return f"every call at {day} (--prices-as-of), table as of {table.as_of}"
+    if usage is None or not usage.snapshots:
+        return f"as of {table.as_of}"
+    if len(usage.snapshots) == 1:
+        return f"as of {next(iter(usage.snapshots))}"
+    return "each call at the rates of its day; snapshots as of " + ", ".join(
+        f"{day} ({calls} calls)" for day, calls in usage.snapshots.items()
+    )
 
 
 def price_breakdown(record: StepRecord, table: PricingTable) -> dict[str, float] | None:
     """Cost of one step per token class (input, cache_read, cache_write_5m,
     cache_write_1h, output, reasoning) in the table's currency, or None if the
     model is unpriced. The classes add up to ``price_step``."""
-    rates = table.rates_for(record.model)
+    rates = table.rates_for(record.model, record.timestamp)
     if rates is None:
         return None
     write_1h = min(record.cache_write_1h_tokens, record.cache_write_tokens)
@@ -156,7 +282,7 @@ def price_breakdown(record: StepRecord, table: PricingTable) -> dict[str, float]
 
 def price_step(record: StepRecord, table: PricingTable) -> float | None:
     """Cost of one step in the table's currency, or None if the model is unpriced."""
-    rates = table.rates_for(record.model)
+    rates = table.rates_for(record.model, record.timestamp)
     if rates is None:
         return None
     write_1h = min(record.cache_write_1h_tokens, record.cache_write_tokens)

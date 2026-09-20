@@ -304,6 +304,22 @@ The default run lists new, removed and repriced models with the catalogue date, 
 models the hub cannot price fully and flags cache-read prices that look wrong. Nothing is
 written without `--write`, so an upstream feed error never lands unseen.
 
+**A call keeps the price of its day.** `--write` does not overwrite the old rates: the
+previous table moves under `history` in the same file, with its own `as_of` date. Every
+report then prices each call with the snapshot in force on the day the call ran, so a price
+change never moves the cost of past sessions. The disclosure checklist lists the snapshots
+it used and how many calls each one priced. Two cases are stated rather than hidden:
+
+- a call older than the first snapshot of its model is priced with that first snapshot, and
+  the report counts those calls;
+- `as_of` is the day a price was read, not the day the vendor changed it. When you know the
+  vendor's date from a source you can cite, add `"effective_from": "YYYY-MM-DD"` to that
+  snapshot and it is used instead.
+
+To re-price everything on purpose, for instance "what would last quarter cost at today's
+rates", pass `--prices-as-of latest` or `--prices-as-of 2026-09-01` to `report`, `compare`,
+`explain`, `sessions list` or `sessions summary`. The checklist says so when you do.
+
 **Known limitation.** One rate per token class. Batch discounts, fast mode, the priority tier
 and data residency surcharges are not modelled, nor is OpenAI's long-context tier above 272K
 input tokens on GPT-5.5 and GPT-5.4: attempts that cross it are understated, and the report

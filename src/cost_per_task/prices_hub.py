@@ -168,13 +168,36 @@ def diff_tables(old: dict | None, new: dict) -> list[str]:
             f"output {rates['output_per_mtok']}"
         )
     for model in sorted(set(old_models) - set(new_models)):
-        lines.append(f"- {model}: no longer in the hub (kept only if you skip --write)")
+        lines.append(f"- {model}: no longer in the hub (its last rates stay under history)")
     for model in sorted(set(old_models) & set(new_models)):
         for key in _RATE_KEYS:
             before, after = old_models[model].get(key), new_models[model].get(key)
             if before != after:
                 lines.append(f"~ {model}.{key}: {before} -> {after}")
     return lines
+
+
+def with_history(old: dict | None, new: dict) -> dict:
+    """The table to write: the new snapshot on top, every earlier one kept
+    under ``history`` so that past calls keep the rates of their day. When
+    no rate moved, the new snapshot takes over the date the rates are known
+    from (``effective_from``) instead of adding an identical entry."""
+    if old is None:
+        return new
+    history = list(old.get("history") or [])
+    previous = {key: value for key, value in old.items() if key != "history"}
+    merged = dict(new)
+    if previous.get("models") == new.get("models"):
+        known_from = previous.get("effective_from") or previous.get("as_of")
+        if known_from and known_from < new["as_of"]:
+            merged = {"currency": new["currency"], "as_of": new["as_of"],
+                      "effective_from": known_from,
+                      **{k: v for k, v in new.items() if k not in ("currency", "as_of")}}
+    elif previous.get("as_of") != new.get("as_of"):
+        history.insert(0, previous)
+    if history:
+        merged["history"] = history
+    return merged
 
 
 def write_table(table: dict, path: str | Path) -> None:

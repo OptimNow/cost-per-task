@@ -45,7 +45,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..labels import Label
-from ..pricing import PricingTable, price_step
+from ..pricing import PricingTable, describe_usage, price_step, prices_line
 from ..schema import StepRecord
 
 PRODUCTS = {
@@ -590,9 +590,11 @@ def summarise_sessions(
     total = 0.0
     stamps: list[str] = []
     ranked: list[tuple[Session, float]] = []
+    priced: list[StepRecord] = []
     for session in sessions.values():
         session_cost = 0.0
         for record in session.records("-"):
+            priced.append(record)
             cost = price_step(record, table)
             if cost is None:
                 unpriced += 1
@@ -619,6 +621,7 @@ def summarise_sessions(
                 stamps.append(local)
         ranked.append((session, session_cost))
     ranked.sort(key=lambda item: (-item[1], item[0].started))
+    table.usage = describe_usage(priced, table)
 
     def rows(name: str, *, by_cost: bool) -> list[tuple[str, int, int, float]]:
         items = [(key, len(b[0]), b[1], b[2]) for key, b in groups[name].items()]
@@ -676,11 +679,16 @@ def render_sessions_summary(
     when = f", {summary.first} to {summary.last} local time" if summary.first else ""
     lines = [
         f"{summary.sessions} sessions, {summary.calls:,} model calls{when}",
-        f"cost at API list prices as of {table.as_of}: {summary.cost:,.2f} {currency}",
+        f"cost at API list prices, {prices_line(table)}: {summary.cost:,.2f} {currency}",
         "  on a subscription you are not billed per token: this is a shadow cost, not a bill",
     ]
     if summary.unpriced_calls:
         lines.append(f"  {summary.unpriced_calls} calls on models without a price count as zero")
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  {table.usage.predating:,} calls are older than the first price snapshot of their "
+            "model and are priced with it"
+        )
     t = summary.tokens
     prompt = t["input"] + t["cache_read"] + t["cache_write"]
     hit = f" ({100 * t['cache_read'] / prompt:.1f}% of prompt tokens)" if prompt else ""

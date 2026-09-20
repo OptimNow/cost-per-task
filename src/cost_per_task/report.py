@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost
-from .pricing import PricingTable
+from .pricing import PricingTable, prices_line
 
 
 def summary_to_dict(summary: GroupSummary) -> dict:
@@ -26,7 +26,12 @@ def summary_to_dict(summary: GroupSummary) -> dict:
 
 
 def table_to_dict(table: PricingTable) -> dict:
-    return {"currency": table.currency, "as_of": table.as_of, "source": table.source}
+    data = {"currency": table.currency, "as_of": table.as_of, "source": table.source}
+    if table.usage is not None:
+        data["snapshots_used"] = table.usage.snapshots
+        data["calls_predating_snapshots"] = table.usage.predating
+        data["pinned_to"] = table.usage.pinned
+    return data
 
 
 def render_json(
@@ -169,9 +174,14 @@ def _checklist(
     lines = ["disclosure checklist"]
     lines.append(f"  model versions: {', '.join(models) or 'none'}")
     lines.append(
-        f"  prices: as of {table.as_of} in {table.currency}"
+        f"  prices: {prices_line(table)} in {table.currency}"
         + (f"; source: {table.source}" if table.source else "")
     )
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
     lines.append(f"  harness: {harness or 'not stated (pass --harness)'}")
     cache_rates = "; ".join(
         f"{_group_name(s)} {100 * s.cache_hit_rate:.1f}%"
@@ -316,8 +326,13 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
         + (f" (also {', '.join(others)})" if others else "")
         + f"; steps {a.steps}; tool calls {a.tool_calls}"
         + f"; effort {', '.join(sorted(a.efforts)) or 'not recorded'}",
-        f"  cost C: {_money(a.cost, currency)} at prices of {table.as_of}",
+        f"  cost C: {_money(a.cost, currency)} at prices {prices_line(table)}",
     ]
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
     if a.unpriced_steps:
         lines.append(f"  warning: {a.unpriced_steps} steps had no price and count as zero cost")
     if a.cache_hit_rate is not None:

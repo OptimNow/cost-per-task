@@ -44,8 +44,17 @@ from .importers.claude_sessions import (
 from .importers.common import ImportError_
 from .labels import Label, LabelError, append_label, import_csv, load_labels
 from .metrics import explain_attempt
-from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
-from .pricing import PricingError, PricingTable, default_table_paths
+from .prices_hub import (
+    HUB_URL,
+    PROVIDERS,
+    build_table,
+    diff_tables,
+    fetch_hub,
+    load_hub,
+    with_history,
+    write_table,
+)
+from .pricing import PricingError, PricingTable, default_table_paths, describe_usage, prices_line
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
 from .report import render_comparison, render_explain, render_json, render_report
 from .schema import JsonlWriter, read_jsonl
@@ -87,6 +96,15 @@ def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_prices_as_of(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--prices-as-of",
+        metavar="DATE",
+        help="price every call at the rates of this day (YYYY-MM-DD) or at the latest ones (latest); "
+        "default: each call at the rates in force on its own day",
+    )
+
+
 def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--labels", default=DEFAULT_LABELS)
@@ -95,6 +113,7 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
         action="append",
         help="pricing table JSON; repeat to merge vendors (default: the Anthropic and OpenAI tables shipped with the tool)",
     )
+    _add_prices_as_of(parser)
     parser.add_argument("--cleanup-cost", type=float, help="K: cost of one leaked failure")
     parser.add_argument("--leak-rate", type=float, help="override L instead of using leak labels")
     parser.add_argument("--retry-cap", type=int, help="N for p_N (default: max attempts per task)")
@@ -162,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         help="pricing table JSON; repeat to merge vendors (default: the shipped tables)",
     )
+    _add_prices_as_of(explain)
     explain.add_argument(
         "--top", type=int, default=10, help="how many of the most expensive steps to list (0: none)"
     )
@@ -196,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     s_list.add_argument("--out", default=DEFAULT_SHEET, help="sheet to write or refresh")
     s_list.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
     s_list.add_argument("--prices", action="append", help="pricing table(s) for the cost column")
+    _add_prices_as_of(s_list)
     s_list.add_argument("--no-titles", action="store_true", help="leave session titles out of the sheet")
     s_import = sessions_sub.add_parser("import", help="import the sessions you gave a task, with labels")
     s_import.add_argument("sheet", nargs="?", default=DEFAULT_SHEET)
@@ -218,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         "--top", type=int, default=5, help="how many of the most expensive sessions to list (0: none)"
     )
     s_summary.add_argument("--prices", action="append", help="pricing table(s) for the cost")
+    _add_prices_as_of(s_summary)
     for sp in (s_list, s_import, s_summary):
         sp.add_argument("--source", choices=("all", "code", "cowork"), default="all",
                         help="Claude Code transcripts, Cowork sessions, or both")
@@ -358,12 +380,20 @@ def _cmd_label(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_table(paths: list[str], args: argparse.Namespace) -> PricingTable:
+    table = PricingTable.load_many(paths)
+    if args.prices_as_of:
+        table.pin_to(args.prices_as_of)
+    return table
+
+
 def _analysis(args: argparse.Namespace, *, by_task_type: bool):
     try:
         return load_analysis(
             log=args.log,
             labels=args.labels,
             prices=args.prices or default_table_paths(),
+            prices_as_of=args.prices_as_of,
             by_task_type=by_task_type,
             task_type=args.task_type,
             k=args.k,
@@ -413,7 +443,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 def _cmd_explain(args: argparse.Namespace) -> int:
     try:
         records = read_jsonl(args.log)
-        table = PricingTable.load_many(args.prices or default_table_paths())
+        table = _load_table(args.prices or default_table_paths(), args)
     except (OSError, PricingError) as exc:
         print(f"cpt explain: {exc}", file=sys.stderr)
         return 1
@@ -437,6 +467,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
             return 1
         task_id, attempt_id = found
         steps = [r for r in records if r.task_id == task_id and r.attempt_id == attempt_id]
+    table.usage = describe_usage(steps, table)
     try:
         explanation = explain_attempt(steps, table, load_labels(args.labels))
     except ValueError:
@@ -509,8 +540,10 @@ def _cmd_prices(args: argparse.Namespace) -> int:
     else:
         print(f"no changes against {out}")
     if args.write:
-        write_table(table, out)
-        print(f"wrote {out}")
+        merged = with_history(existing, table)
+        write_table(merged, out)
+        kept = len(merged.get("history", []))
+        print(f"wrote {out}" + (f"; {kept} earlier snapshots kept under history" if kept else ""))
     elif changes or existing is None:
         print("dry run; pass --write to update the table")
     return 0
@@ -565,7 +598,7 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
     table = None
     if price_paths:
         try:
-            table = PricingTable.load_many(price_paths)
+            table = _load_table(price_paths, args)
         except (OSError, PricingError) as exc:
             print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
             return 1
@@ -587,9 +620,10 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
     for product, count in sorted(by_product.items()):
         print(f"  {product}: {count}")
     if table is not None:
+        table.usage = describe_usage([r for s in sessions.values() for r in s.records("-")], table)
         total = sum(s.cost(table)[0] for s in sessions.values())
         unpriced = sorted({m for s in sessions.values() for m in s.models() if table.rates_for(m) is None})
-        print(f"cost column: {total:.2f} {table.currency} in total at API list prices as of {table.as_of}.")
+        print(f"cost column: {total:.2f} {table.currency} in total at API list prices, {prices_line(table)}.")
         print("  On a subscription you are not billed per token: this is a shadow cost.")
         if unpriced:
             print(f"  No price for {', '.join(unpriced)}; those calls count as zero.")
@@ -676,7 +710,7 @@ def _cmd_sessions_summary(args: argparse.Namespace) -> int:
         print(f"cpt sessions: --since expects YYYY-MM-DD, got '{args.since}'", file=sys.stderr)
         return 2
     try:
-        table = PricingTable.load_many(args.prices or _default_price_paths())
+        table = _load_table(args.prices or _default_price_paths(), args)
     except (OSError, PricingError) as exc:
         print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
         return 1

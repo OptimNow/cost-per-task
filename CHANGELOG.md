@@ -6,6 +6,26 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Added
+- Dated price snapshots. `cpt prices refresh --write` keeps the previous table under `history`
+  in the same file instead of overwriting it, and every command prices each call with the
+  snapshot in force on the day the call ran. A price change no longer moves the cost of past
+  sessions. When no rate moved, the new table carries `effective_from` (the date the rates
+  are known from) rather than an identical snapshot. A snapshot may state `effective_from`
+  by hand when the vendor's date is known from a citable source.
+- The disclosure checklist, `cpt explain`, `cpt sessions summary` and the JSON output list the
+  snapshots used with the calls each one priced, and count the calls older than the first
+  snapshot of their model (priced with that first snapshot).
+- `--prices-as-of DATE|latest` on `report`, `compare`, `explain`, `sessions list` and
+  `sessions summary`: price every call at the rates of one day, on purpose.
+- `prices/anthropic.json` carries its two earlier committed versions (2026-08-27, 2026-09-02)
+  as history, restored from the repository. No rate differs between them.
+
+### Changed
+- A model the hub no longer lists keeps its last known rates (they stay under `history`);
+  it used to become unpriced after `--write`.
+- `as_of` and `effective_from` must be `YYYY-MM-DD` dates; anything else is rejected at load.
+
 ### Security
 - The proxy's two console messages (upstream error, stream without a usage block) print the
   request path without its query string. A gateway that takes the key as `?api_key=` could
