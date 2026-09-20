@@ -167,6 +167,7 @@ class ProxyServer(ThreadingHTTPServer):
         task_type: str | None = None,
         inject_usage: bool = True,
         openrouter_usage: bool | None = None,
+        task_source: str | None = None,
     ) -> None:
         super().__init__(address, ProxyHandler)
         unknown = set(upstreams) - set(ADAPTERS)
@@ -175,6 +176,12 @@ class ProxyServer(ThreadingHTTPServer):
         self.routes: dict[str, SplitResult] = {
             name: urlsplit(url) for name, url in upstreams.items()
         }
+        for name, split in self.routes.items():
+            if split.username or split.password:
+                # Never echo the URL: it holds the credentials.
+                raise ValueError(
+                    f"the {name} upstream URL carries credentials; send them in headers instead"
+                )
         self.provider_names = {
             name: provider_label(name, split) for name, split in self.routes.items()
         }
@@ -182,6 +189,7 @@ class ProxyServer(ThreadingHTTPServer):
         self.task_id = task_id
         self.attempt_id = attempt_id
         self.task_type = task_type
+        self.task_source = task_source
         self.inject_usage = inject_usage
         # OpenRouter usage accounting: auto-detected from the upstream host
         # unless forced, since OpenAI itself rejects the extra parameter.
@@ -191,6 +199,15 @@ class ProxyServer(ThreadingHTTPServer):
         self.openrouter_usage = openrouter_usage
         self.captured_count = 0
         self._step_counter = itertools.count(1)
+
+    def cleartext_upstreams(self) -> list[tuple[str, str]]:
+        """(provider, host) of every upstream reached over plain HTTP outside this
+        machine: API keys and prompts travel unencrypted to those."""
+        return [
+            (name, split.hostname or "")
+            for name, split in self.routes.items()
+            if split.scheme == "http" and split.hostname not in ("127.0.0.1", "localhost", "::1")
+        ]
 
     def next_step_id(self) -> int:
         return next(self._step_counter)
@@ -261,7 +278,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self._relay_stream(response, started, adapter, provider_name)
             else:
                 self._relay_buffered(response, started, adapter, provider_name)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            # The class name only: an http.client message can quote the request URL.
             self.send_error(502, f"upstream unreachable: {exc.__class__.__name__}")
         finally:
             upstream.close()
@@ -286,9 +304,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.rfile.readline()
         return b"".join(chunks)
 
+    def _safe_path(self) -> str:
+        # Some gateways take the key in the query string (``?api_key=``), and
+        # stderr is often redirected to a file: print the bare path only.
+        return self.path.split("?", 1)[0]
+
     def _note_upstream_error(self, status: int) -> None:
         print(
-            f"cpt: upstream returned HTTP {status} for {self.command} {self.path}; "
+            f"cpt: upstream returned HTTP {status} for {self.command} {self._safe_path()}; "
             "not logged",
             file=sys.stderr,
         )
@@ -362,7 +385,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._log(provider_name, usage, latency_ms)
         else:
             print(
-                f"cpt: stream for {self.command} {self.path} ended without a usage "
+                f"cpt: stream for {self.command} {self._safe_path()} ended without a usage "
                 "block; not logged",
                 file=sys.stderr,
             )
@@ -386,6 +409,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             latency_ms=latency_ms,
             effort=getattr(self, "_request_effort", None),
             task_type=self.server.task_type,
+            task_source=self.server.task_source,
             reported_cost=usage.reported_cost,
         )
         self.server.writer.append(record)
@@ -401,6 +425,7 @@ def create_proxy(
     task_type: str | None = None,
     inject_usage: bool = True,
     openrouter_usage: bool | None = None,
+    task_source: str | None = None,
     host: str = "127.0.0.1",
     port: int = 0,
 ) -> ProxyServer:
@@ -417,4 +442,5 @@ def create_proxy(
         task_type=task_type,
         inject_usage=inject_usage,
         openrouter_usage=openrouter_usage,
+        task_source=task_source,
     )

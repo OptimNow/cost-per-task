@@ -16,6 +16,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import secrets
@@ -34,25 +35,41 @@ from .importers.claude_sessions import (
     default_roots,
     discover_sessions,
     harness_summary,
+    has_user_input,
     import_sheet,
     read_sheet,
     render_sessions_summary,
     roots_for_paths,
+    select_new,
+    sheet_rows,
     summarise_sessions,
     write_sheet,
 )
 from .importers.common import ImportError_
+from .labeller import review
 from .labels import Label, LabelError, append_label, import_csv, load_labels
-from .metrics import explain_attempt
-from .prices_hub import HUB_URL, PROVIDERS, build_table, diff_tables, fetch_hub, load_hub, write_table
-from .pricing import PricingError, PricingTable, default_table_paths
+from .metrics import explain_attempt, summarise_tasks
+from .prices_hub import (
+    HUB_URL,
+    PROVIDERS,
+    build_table,
+    diff_tables,
+    fetch_hub,
+    load_hub,
+    with_history,
+    write_table,
+)
+from .pricing import PricingError, PricingTable, default_table_paths, describe_usage, prices_line
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
-from .report import render_comparison, render_explain, render_json, render_report
+from .review_page import render_page, write_page
+from .report import render_comparison, render_explain, render_json, render_report, render_tasks, table_to_dict
 from .schema import JsonlWriter, read_jsonl
+from .taskid import current_branch, project_name, suggest_task
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
 DEFAULT_SHEET = "sessions.csv"
+DEFAULT_PAGE = "sessions.html"
 # Where cpt sessions import wrote in 0.5.0; still used when present and the
 # default files are absent, so an earlier log is never split in two.
 LEGACY_SESSIONS_LOG = "sessions-log.jsonl"
@@ -87,6 +104,15 @@ def _add_proxy_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_prices_as_of(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--prices-as-of",
+        metavar="DATE",
+        help="price every call at the rates of this day (YYYY-MM-DD) or at the latest ones (latest); "
+        "default: each call at the rates in force on its own day",
+    )
+
+
 def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log", default=DEFAULT_LOG)
     parser.add_argument("--labels", default=DEFAULT_LABELS)
@@ -95,6 +121,7 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
         action="append",
         help="pricing table JSON; repeat to merge vendors (default: the Anthropic and OpenAI tables shipped with the tool)",
     )
+    _add_prices_as_of(parser)
     parser.add_argument("--cleanup-cost", type=float, help="K: cost of one leaked failure")
     parser.add_argument("--leak-rate", type=float, help="override L instead of using leak labels")
     parser.add_argument("--retry-cap", type=int, help="N for p_N (default: max attempts per task)")
@@ -122,8 +149,19 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser(
         "run", help="run a command through the proxy: cpt run --task-id T1 -- <command>"
     )
-    run.add_argument("--task-id", required=True)
+    run.add_argument(
+        "--task-id",
+        help="task id (default: inferred from the git branch: issue number, else branch name)",
+    )
     run.add_argument("--attempt-id")
+    run.add_argument("--labels", default=DEFAULT_LABELS, help="labels file for --label-from-exit")
+    run.add_argument(
+        "--label-from-exit",
+        action="store_true",
+        help="label the attempt from the command's exit code: 0 is pass, anything else fail. "
+        "Only for a command that checks the result itself (a script ending with the tests); "
+        "an agent CLI exits 0 whether or not it solved the task",
+    )
     _add_proxy_options(run)
     run.add_argument("cmd", nargs=argparse.REMAINDER)
 
@@ -142,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument(
         "--by-model-only", action="store_true", help="do not split groups by task type"
     )
+
+    tasks = sub.add_parser(
+        "tasks", help="one row per task: attempts, outcomes, cost and cost to the first pass"
+    )
+    _add_analysis_options(tasks)
 
     compare = sub.add_parser("compare", help="compare two models and print K*")
     compare.add_argument("model_a", help="the cheaper, leakier model (A)")
@@ -162,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         help="pricing table JSON; repeat to merge vendors (default: the shipped tables)",
     )
+    _add_prices_as_of(explain)
     explain.add_argument(
         "--top", type=int, default=10, help="how many of the most expensive steps to list (0: none)"
     )
@@ -196,11 +240,61 @@ def main(argv: list[str] | None = None) -> int:
     s_list.add_argument("--out", default=DEFAULT_SHEET, help="sheet to write or refresh")
     s_list.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
     s_list.add_argument("--prices", action="append", help="pricing table(s) for the cost column")
+    _add_prices_as_of(s_list)
     s_list.add_argument("--no-titles", action="store_true", help="leave session titles out of the sheet")
+    s_list.add_argument(
+        "--no-infer",
+        action="store_true",
+        help="leave the task column empty instead of suggesting one from the branch or pull request",
+    )
+    s_page = sessions_sub.add_parser(
+        "page",
+        help="write the labelling sheet as one self-contained HTML page: drop-down lists, filters, "
+        "no server, nothing loaded from the network",
+    )
+    s_page.add_argument("--out", default=DEFAULT_PAGE, help="page to write")
+    s_page.add_argument(
+        "--sheet", default=DEFAULT_SHEET, help="existing sheet whose entries the page starts from"
+    )
+    s_page.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
+    s_page.add_argument("--prices", action="append", help="pricing table(s) for the cost column")
+    _add_prices_as_of(s_page)
+    s_page.add_argument("--no-titles", action="store_true", help="leave session titles out of the page")
+    s_page.add_argument(
+        "--no-infer", action="store_true", help="suggest no task and leave the branch out"
+    )
+    s_label = sessions_sub.add_parser(
+        "label", help="label sessions one by one in the terminal, no spreadsheet needed"
+    )
+    s_label.add_argument("--since", help="only sessions active on or after this date, YYYY-MM-DD")
+    s_label.add_argument("--prices", action="append", help="pricing table(s) for the cost shown")
+    _add_prices_as_of(s_label)
+    s_label.add_argument("--no-titles", action="store_true", help="do not show session titles")
+    s_label.add_argument(
+        "--no-infer", action="store_true", help="suggest no task: you name each one with t"
+    )
+    s_label.add_argument("--labels", help=f"labels file (default {DEFAULT_LABELS}, as cpt label)")
+    for sp in (s_list, s_page, s_label):
+        sp.add_argument(
+            "--new",
+            action="store_true",
+            help="only the sessions since last time: not in the log, and still active after the "
+            "last session that is",
+        )
+        sp.add_argument(
+            "--min-calls", type=int, default=1, metavar="N",
+            help="leave out sessions with fewer than N model calls (default 1: keep all)",
+        )
+        sp.add_argument("--log", help=f"log that says what is already imported (default {DEFAULT_LOG})")
     s_import = sessions_sub.add_parser("import", help="import the sessions you gave a task, with labels")
     s_import.add_argument("sheet", nargs="?", default=DEFAULT_SHEET)
     s_import.add_argument("--log", help=f"log to append to (default {DEFAULT_LOG}, as cpt run)")
     s_import.add_argument("--labels", help=f"labels file (default {DEFAULT_LABELS}, as cpt label)")
+    s_import.add_argument(
+        "--include-unlabelled",
+        action="store_true",
+        help="also import sessions whose task is still the suggested one and that have no outcome",
+    )
     s_summary = sessions_sub.add_parser(
         "summary", help="totals by product, model and period at API list prices, no labels needed"
     )
@@ -218,7 +312,8 @@ def main(argv: list[str] | None = None) -> int:
         "--top", type=int, default=5, help="how many of the most expensive sessions to list (0: none)"
     )
     s_summary.add_argument("--prices", action="append", help="pricing table(s) for the cost")
-    for sp in (s_list, s_import, s_summary):
+    _add_prices_as_of(s_summary)
+    for sp in (s_list, s_page, s_label, s_import, s_summary):
         sp.add_argument("--source", choices=("all", "code", "cowork"), default="all",
                         help="Claude Code transcripts, Cowork sessions, or both")
         sp.add_argument("--path", action="append", default=[],
@@ -232,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": _cmd_run,
         "label": _cmd_label,
         "report": _cmd_report,
+        "tasks": _cmd_tasks,
         "compare": _cmd_compare,
         "explain": _cmd_explain,
         "import": _cmd_import,
@@ -246,9 +342,25 @@ def _upstreams(args: argparse.Namespace) -> dict[str, str]:
     return {"anthropic": args.anthropic_upstream, "openai": args.openai_upstream}
 
 
+def _start_proxy(**options):
+    """The proxy, or None after saying why not. Warns when an upstream is plain HTTP."""
+    try:
+        server = create_proxy(**options)
+    except ValueError as exc:
+        print(f"cpt: {exc}", file=sys.stderr)
+        return None
+    for name, host in server.cleartext_upstreams():
+        print(
+            f"cpt: warning: the {name} upstream ({host}) is plain HTTP: API keys and prompts "
+            "travel unencrypted to it; use an https:// URL",
+            file=sys.stderr,
+        )
+    return server
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     attempt_id = args.attempt_id or _new_attempt_id()
-    server = create_proxy(
+    server = _start_proxy(
         upstreams=_upstreams(args),
         log_path=args.log,
         task_id=args.task_id,
@@ -257,6 +369,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         inject_usage=not args.no_inject_usage,
         port=args.port,
     )
+    if server is None:
+        return 2
     host, port = server.server_address[:2]
     print(f"cpt proxy on http://{host}:{port}")
     print(f"log: {args.log}  task: {args.task_id}  attempt: {attempt_id}")
@@ -282,16 +396,32 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if resolved:
         cmd[0] = resolved
 
+    task_source = None
+    if not args.task_id:
+        guess = suggest_task(branch=current_branch(), project=project_name(os.getcwd()))
+        if guess is None:
+            print(
+                "cpt run: no --task-id, and no git branch to infer one from (not a repository, "
+                "or a default branch); pass --task-id T1",
+                file=sys.stderr,
+            )
+            return 2
+        args.task_id, task_source = guess
+        print(f"cpt: task id inferred from the git {task_source}: {args.task_id}")
+
     attempt_id = args.attempt_id or _new_attempt_id()
-    server = create_proxy(
+    server = _start_proxy(
         upstreams=_upstreams(args),
         log_path=args.log,
         task_id=args.task_id,
         attempt_id=attempt_id,
         task_type=args.task_type,
+        task_source=task_source,
         inject_usage=not args.no_inject_usage,
         port=0,
     )
+    if server is None:
+        return 2
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -304,8 +434,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         f"cpt: task {args.task_id} attempt {attempt_id}; "
         f"proxy on port {port}; logging to {args.log}"
     )
+    code = None
     try:
-        return subprocess.run(cmd, env=env).returncode
+        code = subprocess.run(cmd, env=env).returncode
+        return code
     finally:
         server.shutdown()
         server.server_close()
@@ -313,6 +445,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"cpt: captured {server.captured_count} steps "
             f"(task {args.task_id}, attempt {attempt_id}) in {args.log}"
         )
+        if args.label_from_exit and code is not None and server.captured_count:
+            outcome = "pass" if code == 0 else "fail"
+            append_label(
+                args.labels,
+                Label(task_id=args.task_id, attempt_id=attempt_id, outcome=outcome,
+                      note=f"from exit code {code}"),
+            )
+            print(f"cpt: labelled {outcome} from exit code {code} in {args.labels}")
 
 
 def _latest_attempt(records, task_id: str | None) -> tuple[str, str] | None:
@@ -358,12 +498,20 @@ def _cmd_label(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_table(paths: list[str], args: argparse.Namespace) -> PricingTable:
+    table = PricingTable.load_many(paths)
+    if args.prices_as_of:
+        table.pin_to(args.prices_as_of)
+    return table
+
+
 def _analysis(args: argparse.Namespace, *, by_task_type: bool):
     try:
         return load_analysis(
             log=args.log,
             labels=args.labels,
             prices=args.prices or default_table_paths(),
+            prices_as_of=args.prices_as_of,
             by_task_type=by_task_type,
             task_type=args.task_type,
             k=args.k,
@@ -386,6 +534,18 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(render_json(analysis.attempts, analysis.summaries, analysis.table, harness=args.harness))
     else:
         print(render_report(analysis.attempts, analysis.summaries, analysis.table, harness=args.harness))
+    return 0
+
+
+def _cmd_tasks(args: argparse.Namespace) -> int:
+    analysis = _analysis(args, by_task_type=False)
+    if analysis is None:
+        return 1
+    if args.json:
+        tasks = [dataclasses.asdict(t) for t in summarise_tasks(analysis.attempts)]
+        print(json.dumps({"prices": table_to_dict(analysis.table), "tasks": tasks}, indent=2))
+    else:
+        print(render_tasks(analysis.attempts, analysis.table))
     return 0
 
 
@@ -413,7 +573,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 def _cmd_explain(args: argparse.Namespace) -> int:
     try:
         records = read_jsonl(args.log)
-        table = PricingTable.load_many(args.prices or default_table_paths())
+        table = _load_table(args.prices or default_table_paths(), args)
     except (OSError, PricingError) as exc:
         print(f"cpt explain: {exc}", file=sys.stderr)
         return 1
@@ -437,6 +597,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
             return 1
         task_id, attempt_id = found
         steps = [r for r in records if r.task_id == task_id and r.attempt_id == attempt_id]
+    table.usage = describe_usage(steps, table)
     try:
         explanation = explain_attempt(steps, table, load_labels(args.labels))
     except ValueError:
@@ -509,8 +670,10 @@ def _cmd_prices(args: argparse.Namespace) -> int:
     else:
         print(f"no changes against {out}")
     if args.write:
-        write_table(table, out)
-        print(f"wrote {out}")
+        merged = with_history(existing, table)
+        write_table(merged, out)
+        kept = len(merged.get("history", []))
+        print(f"wrote {out}" + (f"; {kept} earlier snapshots kept under history" if kept else ""))
     elif changes or existing is None:
         print("dry run; pass --write to update the table")
     return 0
@@ -539,6 +702,10 @@ def _cmd_sessions(args: argparse.Namespace) -> int:
         return _cmd_sessions_list(args)
     if args.sessions_command == "summary":
         return _cmd_sessions_summary(args)
+    if args.sessions_command == "label":
+        return _cmd_sessions_label(args)
+    if args.sessions_command == "page":
+        return _cmd_sessions_page(args)
     return _cmd_sessions_import(args)
 
 
@@ -553,26 +720,138 @@ def _print_scan_header(sessions, stats, roots, since) -> None:
         print(f"  {folder}")
 
 
-def _cmd_sessions_list(args: argparse.Namespace) -> int:
+def _parse_since(args: argparse.Namespace):
+    """(date or None, ok)."""
     try:
-        since = date.fromisoformat(args.since) if args.since else None
+        return (date.fromisoformat(args.since) if args.since else None), True
     except ValueError:
         print(f"cpt sessions: --since expects YYYY-MM-DD, got '{args.since}'", file=sys.stderr)
+        return None, False
+
+
+def _imported_tasks(log: str) -> dict[str, str]:
+    """Attempt id to task id for everything already in the log."""
+    found: dict[str, str] = {}
+    if Path(log).exists():
+        for record in read_jsonl(log):
+            found.setdefault(record.attempt_id, record.task_id)
+    return found
+
+
+def _scope(args: argparse.Namespace, sessions: dict, imported: set[str], since) -> tuple[dict, dict, str]:
+    """The sessions a list or label run is about: past --since, with at least --min-calls
+    calls. Also returns the new ones among them and the moment they are new since."""
+    fresh, cutoff = select_new(sessions, imported)
+    kept = {
+        sid: s
+        for sid, s in sessions.items()
+        if len(s.calls) >= args.min_calls and (since is None or _local_day(s.ended) >= since.isoformat())
+    }
+    return kept, {sid: s for sid, s in kept.items() if sid in fresh}, cutoff
+
+
+def _local_day(timestamp: str) -> str:
+    return datetime.fromisoformat(timestamp).astimezone().strftime("%Y-%m-%d") if timestamp else ""
+
+
+def _new_line(fresh: dict, cutoff: str) -> str:
+    if not cutoff:
+        return f"{len(fresh)} sessions are not in the log yet (none is, so --new changes nothing; try --since)"
+    when = datetime.fromisoformat(cutoff).astimezone().strftime("%Y-%m-%d %H:%M")
+    return f"{len(fresh)} new sessions since {when}, the end of the last session in the log"
+
+
+@dataclasses.dataclass
+class _SheetInputs:
+    """What cpt sessions list and cpt sessions page share: the sessions in scope, what is
+    already typed or imported, and the prices."""
+
+    roots: list
+    stats: object
+    since: object
+    sessions: dict
+    fresh: dict
+    cutoff: str
+    table: object
+    existing: dict
+    imported: set
+    dropped: int = 0
+
+    def rows(self, infer: bool) -> list[dict]:
+        return sheet_rows(
+            self.sessions, table=self.table, existing=self.existing, infer=infer, imported=self.imported
+        )
+
+
+def _sheet_inputs(args: argparse.Namespace, sheet: Path) -> _SheetInputs | int:
+    """The inputs, or the exit code after the reason was printed."""
+    since, ok = _parse_since(args)
+    if not ok:
         return 2
     roots = _session_roots(args)
-    sessions, stats = discover_sessions(roots, since=since, include_titles=not args.no_titles)
+    # Everything is read, then narrowed: what is new depends on sessions --since would hide.
+    found, stats = discover_sessions(roots, include_titles=not args.no_titles)
+    log = _sessions_file(args.log, DEFAULT_LOG, LEGACY_SESSIONS_LOG)
+    imported = set(_imported_tasks(log))
+    sessions, fresh, cutoff = _scope(args, found, imported, since)
     price_paths = args.prices or _default_price_paths()
     table = None
     if price_paths:
         try:
-            table = PricingTable.load_many(price_paths)
+            table = _load_table(price_paths, args)
         except (OSError, PricingError) as exc:
             print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
             return 1
-    out = Path(args.out)
     try:
-        existing = {r["session_id"]: r for r in read_sheet(out)} if out.exists() else {}
-        written, kept = write_sheet(out, sessions, table=table, existing=existing)
+        existing = {r["session_id"]: r for r in read_sheet(sheet)} if sheet.exists() else {}
+    except (OSError, ValueError) as exc:
+        print(f"cpt sessions: {exc}", file=sys.stderr)
+        return 1
+    dropped = 0
+    if args.new:
+        # Short: what is new, plus any row whose entries are not in the log yet.
+        pending = {sid: row for sid, row in existing.items() if sid not in imported and has_user_input(row)}
+        dropped = len(existing) - len(pending)
+        sessions = {sid: s for sid, s in sessions.items() if sid in fresh or sid in pending}
+        existing = pending
+    return _SheetInputs(roots, stats, since, sessions, fresh, cutoff, table, existing, imported, dropped)
+
+
+def _print_sheet_summary(args: argparse.Namespace, inputs: _SheetInputs) -> None:
+    sessions, table = inputs.sessions, inputs.table
+    _print_scan_header(sessions, inputs.stats, inputs.roots, inputs.since)
+    by_product: dict[str, int] = {}
+    for session in sessions.values():
+        by_product[session.product] = by_product.get(session.product, 0) + 1
+    for product, count in sorted(by_product.items()):
+        print(f"  {product}: {count}")
+    print(
+        _new_line(inputs.fresh, inputs.cutoff)
+        + ("" if args.new or not inputs.cutoff else "; --new keeps only those")
+    )
+    if table is not None:
+        table.usage = describe_usage([r for s in sessions.values() for r in s.records("-")], table)
+        total = sum(s.cost(table)[0] for s in sessions.values())
+        unpriced = sorted({m for s in sessions.values() for m in s.models() if table.rates_for(m) is None})
+        print(f"cost column: {total:.2f} {table.currency} in total at API list prices, {prices_line(table)}.")
+        print("  On a subscription you are not billed per token: this is a shadow cost.")
+        if unpriced:
+            print(f"  No price for {', '.join(unpriced)}; those calls count as zero.")
+    else:
+        print("cost column left empty: no pricing table found (pass --prices).")
+    _print_session_warnings(inputs.stats)
+
+
+def _cmd_sessions_list(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    inputs = _sheet_inputs(args, out)
+    if isinstance(inputs, int):
+        return inputs
+    try:
+        written, kept = write_sheet(
+            out, inputs.sessions, table=inputs.table, existing=inputs.existing,
+            infer=not args.no_infer, imported=inputs.imported,
+        )
     except PermissionError:
         print(f"cpt sessions: cannot write {out}; close it in Excel and run again", file=sys.stderr)
         return 1
@@ -580,26 +859,138 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
         print(f"cpt sessions: {exc}", file=sys.stderr)
         return 1
 
-    _print_scan_header(sessions, stats, roots, since)
-    by_product: dict[str, int] = {}
-    for session in sessions.values():
-        by_product[session.product] = by_product.get(session.product, 0) + 1
-    for product, count in sorted(by_product.items()):
-        print(f"  {product}: {count}")
-    if table is not None:
-        total = sum(s.cost(table)[0] for s in sessions.values())
-        unpriced = sorted({m for s in sessions.values() for m in s.models() if table.rates_for(m) is None})
-        print(f"cost column: {total:.2f} {table.currency} in total at API list prices as of {table.as_of}.")
-        print("  On a subscription you are not billed per token: this is a shadow cost.")
-        if unpriced:
-            print(f"  No price for {', '.join(unpriced)}; those calls count as zero.")
-    else:
-        print("cost column left empty: no pricing table found (pass --prices).")
-    _print_session_warnings(stats)
+    _print_sheet_summary(args, inputs)
     print(f"wrote {out}: {written} rows, {kept} with your entries kept.")
+    if inputs.dropped:
+        print(
+            f"  --new: {inputs.dropped} rows of the previous sheet were left out "
+            "(in the log already, or untouched)."
+        )
+    print("Rows come in the order of the status column: new, open (seen before, no outcome yet),")
+    print("labelled (not imported yet), imported.")
+    if not args.no_infer:
+        print("The task column is pre-filled from the issue number, pull request or git branch of each")
+        print("session (task_source says which); change any that is wrong, sessions that did the same")
+        print("job share a task. A suggested task is only imported once you give it an outcome.")
     print("Next: open it in Excel, fill task (same name for sessions that did the same job), task_type,")
     print("outcome (pass or fail) and leaked (yes or no) for the sessions to measure, save, then run:")
     print(f"  python -m cost_per_task.cli sessions import {out}")
+    print("Or skip the spreadsheet: python -m cost_per_task.cli sessions label --new")
+    print("Or fill it in a browser:  python -m cost_per_task.cli sessions page --new")
+    return 0
+
+
+def _cmd_sessions_page(args: argparse.Namespace) -> int:
+    inputs = _sheet_inputs(args, Path(args.sheet))
+    if isinstance(inputs, int):
+        return inputs
+    infer = not args.no_infer
+    rows = inputs.rows(infer)
+    suggestions = {}
+    if infer:
+        for sid, session in inputs.sessions.items():
+            guess = session.suggested_task()
+            if guess:
+                suggestions[sid] = guess
+    html = render_page(
+        rows,
+        suggestions=suggestions,
+        currency=inputs.table.currency if inputs.table is not None else "",
+        generated=datetime.now().strftime("%Y-%m-%d %H:%M"),
+    )
+    out = Path(args.out)
+    try:
+        write_page(out, html)
+    except OSError as exc:
+        print(f"cpt sessions: cannot write {out}: {exc}", file=sys.stderr)
+        return 1
+
+    _print_sheet_summary(args, inputs)
+    carried = sum(1 for row in rows if has_user_input(row))
+    print(f"wrote {out}: {len(rows)} sessions, {carried} with entries carried over from {args.sheet}.")
+    print("Open it in your browser (double-click the file). It works offline, loads nothing and can")
+    print("connect to nothing. Pick outcomes from the lists, then press Save and keep the file as")
+    print(f"{args.sheet} next to your log. Then run:")
+    print(f"  python -m cost_per_task.cli sessions import {args.sheet}")
+    print(f"The page holds session titles and branch names: treat {out} as private, like the sheet.")
+    return 0
+
+
+def _say(text: str) -> None:
+    """print() that survives a console unable to show a character of a session title."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "ascii"
+        print(text.encode(encoding, "replace").decode(encoding))
+
+
+def _print_report_hint(sessions: dict, imported_tasks: dict[str, str], log: str, labels_path: str) -> None:
+    measured = [sessions[sid] for sid in imported_tasks if sid in sessions]
+    harness = harness_summary(measured) or "Claude Code"
+    options = (f" --log {log}" if log != DEFAULT_LOG else "") + (
+        f" --labels {labels_path}" if labels_path != DEFAULT_LABELS else ""
+    )
+    print("Report:")
+    print(f'  python -m cost_per_task.cli report{options} --seed 1 --harness "{harness}"')
+
+
+def _cmd_sessions_label(args: argparse.Namespace) -> int:
+    since, ok = _parse_since(args)
+    if not ok:
+        return 2
+    roots = _session_roots(args)
+    found, stats = discover_sessions(roots, include_titles=not args.no_titles)
+    log = _sessions_file(args.log, DEFAULT_LOG, LEGACY_SESSIONS_LOG)
+    labels_path = _sessions_file(args.labels, DEFAULT_LABELS, LEGACY_SESSIONS_LABELS)
+    imported_tasks = _imported_tasks(log)
+    existing_labels = load_labels(labels_path)
+    sessions, fresh, cutoff = _scope(args, found, set(imported_tasks), since)
+    table = None
+    price_paths = args.prices or _default_price_paths()
+    if price_paths:
+        try:
+            table = _load_table(price_paths, args)
+        except (OSError, PricingError) as exc:
+            print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
+            return 1
+
+    judged = {attempt for _, attempt in existing_labels}
+    todo = [
+        s
+        for s in sorted(sessions.values(), key=lambda s: s.started)  # oldest first: retries follow the original
+        if s.session_id not in judged and (not args.new or s.session_id in fresh)
+    ]
+    _print_scan_header(sessions, stats, roots, since)
+    print(_new_line(fresh, cutoff))
+    if not todo:
+        print("nothing to label" + (" among the new sessions" if args.new else "") + ".")
+        return 0
+    print(f"{len(todo)} sessions without an outcome, oldest first. Answers are saved one by one.")
+
+    writer = JsonlWriter(log)
+    counts = {"pass": 0, "fail": 0, "leaked": 0, "calls": 0}
+    fixed = {sid: task for sid, task in imported_tasks.items() if sid in sessions}
+    for answer in review(todo, table=table, fixed_tasks=fixed, infer=not args.no_infer, out=_say):
+        result = import_sheet([answer.row], sessions, imported_tasks, existing_labels)
+        for record in result.records:
+            writer.append(record)
+        for label in result.labels:
+            append_label(labels_path, label)
+            counts[label.outcome] += 1
+            counts["leaked"] += label.leaked
+        counts["calls"] += len(result.records)
+        for problem in result.problems:
+            print(f"cpt sessions: warning: {problem}", file=sys.stderr)
+
+    done = counts["pass"] + counts["fail"]
+    print(
+        f"cpt sessions: labelled {done} of {len(todo)} sessions (pass {counts['pass']}, fail {counts['fail']}, "
+        f"leaked {counts['leaked']}); {counts['calls']} model calls added to {log}, labels in {labels_path}"
+    )
+    _print_session_warnings(stats)
+    if done:
+        _print_report_hint(sessions, imported_tasks, log, labels_path)
     return 0
 
 
@@ -612,12 +1003,11 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
     log = _sessions_file(args.log, DEFAULT_LOG, LEGACY_SESSIONS_LOG)
     labels_path = _sessions_file(args.labels, DEFAULT_LABELS, LEGACY_SESSIONS_LABELS)
     sessions, stats = discover_sessions(_session_roots(args), include_titles=False)
-    imported_tasks: dict[str, str] = {}
-    if Path(log).exists():
-        for record in read_jsonl(log):
-            imported_tasks.setdefault(record.attempt_id, record.task_id)
+    imported_tasks = _imported_tasks(log)
     existing_labels = load_labels(labels_path)
-    result = import_sheet(rows, sessions, imported_tasks, existing_labels)
+    result = import_sheet(
+        rows, sessions, imported_tasks, existing_labels, include_unlabelled=args.include_unlabelled
+    )
 
     writer = JsonlWriter(log)
     for record in result.records:
@@ -634,6 +1024,11 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
         f"  skipped: no task {result.blank}, already in the log: {result.already_imported}, "
         f"labels unchanged {result.unchanged_labels}"
     )
+    if result.inferred_only:
+        print(
+            f"  left out: {result.inferred_only} sessions with a suggested task and no outcome "
+            "(fill outcome, or pass --include-unlabelled to measure their cost anyway)"
+        )
     if result.missing:
         print(
             f"  {len(result.missing)} sessions in the sheet have no transcript any more: "
@@ -643,13 +1038,7 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
     for problem in result.problems:
         print(f"cpt sessions: warning: {problem}", file=sys.stderr)
     _print_session_warnings(stats)
-    measured = [sessions[sid] for sid in imported_tasks if sid in sessions]
-    harness = harness_summary(measured) or "Claude Code"
-    options = (f" --log {log}" if log != DEFAULT_LOG else "") + (
-        f" --labels {labels_path}" if labels_path != DEFAULT_LABELS else ""
-    )
-    print("Report:")
-    print(f'  python -m cost_per_task.cli report{options} --seed 1 --harness "{harness}"')
+    _print_report_hint(sessions, imported_tasks, log, labels_path)
     return 0
 
 
@@ -676,7 +1065,7 @@ def _cmd_sessions_summary(args: argparse.Namespace) -> int:
         print(f"cpt sessions: --since expects YYYY-MM-DD, got '{args.since}'", file=sys.stderr)
         return 2
     try:
-        table = PricingTable.load_many(args.prices or _default_price_paths())
+        table = _load_table(args.prices or _default_price_paths(), args)
     except (OSError, PricingError) as exc:
         print(f"cpt sessions: cannot load prices: {exc}", file=sys.stderr)
         return 1

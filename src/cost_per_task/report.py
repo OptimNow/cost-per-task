@@ -11,8 +11,8 @@ import json
 from collections.abc import Iterable
 from datetime import datetime
 
-from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost
-from .pricing import PricingTable
+from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost, summarise_tasks
+from .pricing import PricingTable, prices_line
 
 
 def summary_to_dict(summary: GroupSummary) -> dict:
@@ -26,7 +26,12 @@ def summary_to_dict(summary: GroupSummary) -> dict:
 
 
 def table_to_dict(table: PricingTable) -> dict:
-    return {"currency": table.currency, "as_of": table.as_of, "source": table.source}
+    data = {"currency": table.currency, "as_of": table.as_of, "source": table.source}
+    if table.usage is not None:
+        data["snapshots_used"] = table.usage.snapshots
+        data["calls_predating_snapshots"] = table.usage.predating
+        data["pinned_to"] = table.usage.pinned
+    return data
 
 
 def render_json(
@@ -42,6 +47,7 @@ def render_json(
         "harness": harness,
         "attempts": len(attempts),
         "groups": [summary_to_dict(s) for s in summaries],
+        "tasks": [dataclasses.asdict(t) for t in summarise_tasks(attempts)],
     }
     if comparison is not None:
         a, b = comparison
@@ -69,9 +75,16 @@ def _group_name(summary: GroupSummary) -> str:
     return summary.model if summary.task_type is None else f"{summary.model} [{summary.task_type}]"
 
 
+def _tail(text: str, width: int) -> str:
+    """Shortened from the left: the end of an id (``.../pr-14``) is the telling part."""
+    return text if len(text) <= width else "..." + text[-(width - 3):]
+
+
 def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
+    # Inferred task ids carry the project (shop/issue-123): give them room, up to a point.
+    task_width = min(max([12] + [len(a.task_id) for a in attempts]), 36)
     header = (
-        f"{'task':<12} {'attempt':<26} {'model':<28} {'type':<10} {'steps':>5} "
+        f"{'task':<{task_width}} {'attempt':<26} {'model':<28} {'type':<10} {'steps':>5} "
         f"{'cost':>10} {'outcome':<9}"
     )
     lines = [header, "-" * len(header)]
@@ -80,10 +93,47 @@ def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
         if a.leaked:
             outcome += "+leak"
         lines.append(
-            f"{a.task_id[:12]:<12} {a.attempt_id[:26]:<26} {a.model[:28]:<28} "
+            f"{_tail(a.task_id, task_width):<{task_width}} {a.attempt_id[:26]:<26} {a.model[:28]:<28} "
             f"{(a.task_type or '-')[:10]:<10} {a.steps:>5} {a.cost:>10.4f} {outcome:<9}"
         )
     return lines
+
+
+def _task_table(attempts: list[Attempt], currency: str) -> list[str]:
+    """One row per task, most expensive first: did it get solved, and what did that take."""
+    tasks = summarise_tasks(attempts)
+    width = min(max([12] + [len(t.task_id) for t in tasks]), 36)
+    header = (
+        f"{'task':<{width}} {'attempts':>8} {'pass':>5} {'fail':>5} {'leak':>5} {'open':>5} "
+        f"{'cost ' + currency:>12} {'to first pass':>14}  source"
+    )
+    lines = ["tasks, most expensive first", header, "-" * len(header)]
+    for t in tasks:
+        first = "-" if t.cost_to_first_pass is None else f"{t.cost_to_first_pass:.4f}"
+        lines.append(
+            f"{_tail(t.task_id, width):<{width}} {t.attempts:>8} {t.passes:>5} {t.fails:>5} {t.leaks:>5} "
+            f"{t.open:>5} {t.cost:>12.4f} {first:>14}  {t.source}"
+        )
+    solved = sum(1 for t in tasks if t.passes)
+    lines.append(
+        f"{len(tasks)} tasks: {solved} solved, {sum(1 for t in tasks if not t.passes and not t.open)} "
+        f"failed so far, {sum(1 for t in tasks if not t.passes and t.open)} waiting for an outcome"
+    )
+    return lines
+
+
+def render_tasks(attempts: list[Attempt], table: PricingTable) -> str:
+    """The task table on its own, for ``cpt tasks``."""
+    if not attempts:
+        return "no records in log"
+    lines = [f"prices: {prices_line(table)} ({table.currency})", ""]
+    lines.extend(_task_table(attempts, table.currency))
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
+    return "\n".join(lines)
 
 
 def _reconciliation(s: GroupSummary, currency: str) -> str:
@@ -156,6 +206,21 @@ def _group_section(s: GroupSummary, currency: str) -> list[str]:
     return lines
 
 
+def _task_identity(summaries: list[GroupSummary]) -> str:
+    """How many task ids a person stated and how many were inferred, by signal.
+    Groups by task type split tasks cleanly; a task seen under two models counts in both."""
+    sources: dict[str, int] = {}
+    for s in summaries:
+        for source, count in s.task_sources.items():
+            sources[source] = sources.get(source, 0) + count
+    stated = sources.pop("manual", 0)
+    inferred = sum(sources.values())
+    if not inferred:
+        return f"{stated} tasks, all stated by hand"
+    detail = ", ".join(f"{name} {count}" for name, count in sorted(sources.items()))
+    return f"{stated} tasks stated by hand, {inferred} inferred ({detail}); outcomes are never inferred"
+
+
 def _checklist(
     summaries: Iterable[GroupSummary],
     table: PricingTable,
@@ -169,10 +234,16 @@ def _checklist(
     lines = ["disclosure checklist"]
     lines.append(f"  model versions: {', '.join(models) or 'none'}")
     lines.append(
-        f"  prices: as of {table.as_of} in {table.currency}"
+        f"  prices: {prices_line(table)} in {table.currency}"
         + (f"; source: {table.source}" if table.source else "")
     )
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
     lines.append(f"  harness: {harness or 'not stated (pass --harness)'}")
+    lines.append(f"  task identity: {_task_identity(summaries)}")
     cache_rates = "; ".join(
         f"{_group_name(s)} {100 * s.cache_hit_rate:.1f}%"
         for s in summaries
@@ -240,6 +311,8 @@ def render_report(
         return "no records in log"
     lines: list[str] = [f"prices: {table.as_of} ({table.currency})", ""]
     lines.extend(_attempt_table(attempts, table.currency))
+    lines.append("")
+    lines.extend(_task_table(attempts, table.currency))
     lines.append("")
     for summary in summaries:
         lines.extend(_group_section(summary, table.currency))
@@ -316,8 +389,13 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
         + (f" (also {', '.join(others)})" if others else "")
         + f"; steps {a.steps}; tool calls {a.tool_calls}"
         + f"; effort {', '.join(sorted(a.efforts)) or 'not recorded'}",
-        f"  cost C: {_money(a.cost, currency)} at prices of {table.as_of}",
+        f"  cost C: {_money(a.cost, currency)} at prices {prices_line(table)}",
     ]
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
     if a.unpriced_steps:
         lines.append(f"  warning: {a.unpriced_steps} steps had no price and count as zero cost")
     if a.cache_hit_rate is not None:

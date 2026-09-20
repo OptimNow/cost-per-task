@@ -14,11 +14,15 @@ There is no proxy to run, no API key to set and nothing extra to pay.
 | Model, token counts (input, output, cache reads, cache writes), effort, tool names, timestamps | yes | the usage log |
 | Product (desktop, terminal, Cowork) and Claude Code version | yes | the sheet and the disclosure checklist |
 | Name of the folder the session worked in | yes | the sheet |
+| Git branch and pull request number of the session | yes | the sheet, to suggest a task; the log, only as part of a task id you imported (pass `--no-infer` to leave them out) |
 | Session title (desktop) or names of files a Cowork session produced | yes, unless you pass `--no-titles` | the sheet only, never the log |
 | Your prompts, Claude's answers, tool inputs, file contents | never | nowhere |
 
-The sheet can contain session titles, so treat it as private. The log and labels
-files contain no content and can be shared with the numbers.
+The sheet can contain session titles and branch names, so treat it as private. The log
+and labels files hold no prompt, answer or title. They do hold the task names you
+imported (a suggested one is built from the folder and branch names), model names, tool
+names (which include the names of your MCP servers) and the notes you typed, so read
+them once before sharing them with the numbers. `SECURITY.md` has the full inventory.
 
 ## Where the transcripts are
 
@@ -63,12 +67,18 @@ command. Under each one, what you should see.
    ```
    cpt sessions list
    ```
-   `wrote sessions.csv: N rows`. One row per session, newest first.
+   `wrote sessions.csv: N rows`. One row per session: what is left to do first, newest
+   first. Prefer the terminal to a spreadsheet? Skip steps 2 to 4 and run
+   `cpt sessions label` instead: see [Labelling in the terminal](#labelling-in-the-terminal).
+   Prefer clicking? `cpt sessions page` writes the same sheet as a page for your browser:
+   see [Labelling in a browser page](#labelling-in-a-browser-page).
 
-3. **Label in Excel.** Open `sessions.csv`; for the sessions you want to measure, fill
-   `task` (the same name for sessions that attempted the same job), `task_type` (for
-   example `code`, `analysis`, `writing`), `outcome` (`pass` or `fail`) and, if you later
-   found an accepted result wrong, `leaked` (`yes`). Save as CSV and close Excel.
+3. **Label in Excel.** Open `sessions.csv`. The `task` column is already filled in from
+   the issue number, pull request or git branch of each session; correct any that is
+   wrong (the same name for sessions that attempted the same job). For the sessions you
+   want to measure, fill `outcome` (`pass` or `fail`), `task_type` (for example `code`,
+   `analysis`, `writing`) and, if you later found an accepted result wrong, `leaked`
+   (`yes`). Save as CSV and close Excel.
 
 4. **The import.**
    ```
@@ -82,7 +92,8 @@ command. Under each one, what you should see.
    ```
    cpt report --cleanup-cost 25 --seed 1
    ```
-   One group per model and task type. `CPT_solved` is the headline: the cost per solved
+   The attempts, then one row per task (attempts, passes, fails, cost, cost to the first
+   pass; `cpt tasks` prints that table alone), then one group per model and task type. `CPT_solved` is the headline: the cost per solved
    task, failed attempts included. With few sessions the intervals are wide; that is the
    tool telling you how little the sample proves. The report prints to the screen; keep it
    with `cpt report --cleanup-cost 25 --seed 1 | Out-File -Encoding utf8 report.txt`
@@ -138,30 +149,140 @@ minute. Useful options:
 | `--since 2026-09-01` | only sessions active on or after that date |
 | `--source code` or `--source cowork` | only Claude Code, or only Cowork |
 | `--no-titles` | leave session titles and Cowork file names out of the sheet |
+| `--no-infer` | leave the `task` column empty instead of suggesting one, and the `branch` column with it |
+| `--new` | a short sheet: only the sessions since last time (see below) |
+| `--min-calls 4` | leave out sessions with fewer than 4 model calls, which are rarely a task |
+| `--log FILE` | the log that says what is already imported, when it is not `cpt-log.jsonl` |
 | `--out other.csv` | write the sheet somewhere else |
 | `--path FOLDER` | read transcripts from this folder instead of the usual places |
 
 Running it again later adds new sessions and keeps everything you typed.
 
+**Since last time.** Every run says how many sessions are new: not in the log, and still
+active after the last session that is. With `--new` the sheet holds only those, plus any
+row whose entries have not been imported yet, so a weekly pass is twenty rows and not
+five hundred. Rows already in the log are left out of that short sheet; their outcomes
+live in `cpt-labels.jsonl` and can still be changed with `cpt label`. For a first pass,
+when nothing is in the log yet, use `--since` instead.
+
 ## Step 2: fill in the sheet
 
-Open `sessions.csv` in Excel. The first ten columns come from the tool; leave them
-as they are. The last five are yours:
+Open `sessions.csv` in Excel. Most columns come from the tool; leave them as they
+are. `status` comes first and orders the rows: `new` (first time in the sheet), `open`
+(seen before, still no outcome), `labelled` (has an outcome, not imported yet), `imported`
+(in the log) and `gone` (its transcript was deleted). What helps you recognise a session
+(`started`, `minutes`, `project`, `branch`, `title`, `calls`, cost) sits left of what you
+fill in; ids and other reference columns are at the far right. Five columns are yours:
 
 | Column | What to write |
 |---|---|
-| `task` | a short name for the job. Give the same name to every session that attempted the same job. Leave it empty to skip a session. |
+| `task` | a short name for the job. Give the same name to every session that attempted the same job. It comes pre-filled (see below); overwrite it whenever you know better. |
 | `task_type` | a category such as `coding`, `writing` or `analysis`, so the report compares like with like |
-| `outcome` | `pass` if you accepted the result, `fail` if you gave up or had to redo it |
+| `outcome` | `pass` if you accepted the result, `fail` if you gave up or had to redo it. `ok`, `yes`, `oui` and `passed` read as pass; `ko`, `no`, `non` and `failed` as fail. Any other word is reported with its row number and the row stays unlabelled. |
 | `leaked` | `yes` if you accepted the result and later found it was wrong |
 | `note` | anything you want to remember |
 
 Save it as CSV. Excel in any language is fine, including versions that save with
 semicolons or in the older Windows character set.
 
+**The suggested task.** Typing a task for every session does not survive weekly use, so
+the tool suggests one from what the session already knows. `task_source` says which
+signal it used, strongest first:
+
+| `task_source` | The task is | Example |
+|---|---|---|
+| `issue` | the issue number that opens the branch name | branch `fix/123-login` gives `shop/issue-123` |
+| `pr` | the pull request the session worked on | `shop/pr-14` |
+| `branch` | the git branch, unless it is `main`, `master` or similar | `shop/docs/quick-path` |
+| `session` | the session on its own, when there is nothing better: project, day and the start of its id | `shop/2026-09-10-1a2b3c4d` |
+| `manual` | what you typed | |
+
+Three rules keep the guess honest. The outcome is never guessed: pass or fail is your
+call. A session whose task is still the suggested one and that has no outcome was never
+looked at, so the import leaves it out (`--include-unlabelled` brings it in, to measure
+cost without a success rate). And the report's disclosure checklist states how many
+tasks were stated by hand and how many were inferred, by signal. The suggestion never
+merges two sessions on a hunch: a `session` task stands alone until you give two sessions
+the same name, because a false merge would count unrelated work as retries of one task.
+Session titles are never used for the suggestion, since a task id goes to the log.
+
 Two tips. A session that did one job measures best; a session that mixed several
 jobs counts as one attempt at whichever task you name. And label only sessions you
 can judge honestly: an outcome you are unsure of is better left empty.
+
+## Labelling in the terminal
+
+```
+python -m cost_per_task.cli sessions label --new
+```
+
+This replaces the sheet, Excel and the import with one command. It shows the sessions
+that have no outcome yet, oldest first, one at a time:
+
+```
+[3/18]  shop  2026-09-19 14:02  41 min  23 calls  12.40 USD  claude-fable-5-1
+       task: shop/pr-14 (pr)
+       branch: docs/quick-path
+       title: Quick path for the guide
+       >
+```
+
+Type one letter and Enter:
+
+| Key | Effect |
+|---|---|
+| `p`, `f` | pass or fail (the words `ok`, `ko`, `oui`, `non` work too); the answer is saved at once |
+| `l` | leak: you accepted the result and it turned out wrong |
+| `s` | skip this session; it comes back next time unless `--new` leaves it behind |
+| `t` | type another task name |
+| `m` | same task as the session you labelled just before, which is how a retry joins its task |
+| `y`, `n` | set the task type, add a note |
+| `q` | stop; everything answered so far is kept |
+
+Each answer goes straight to `cpt-log.jsonl` and `cpt-labels.jsonl`, through the same
+code as the sheet import, so the two ways can be mixed. Titles are shown on screen to
+jog your memory and are written nowhere; `--no-titles` hides them. The options
+`--since`, `--new`, `--min-calls`, `--no-infer`, `--source` and `--path` work as they do
+for `cpt sessions list`. The command ends by printing the report command.
+
+## Labelling in a browser page
+
+```
+python -m cost_per_task.cli sessions page --new
+```
+
+This writes `sessions.html`, one file that you open by double-clicking it. It shows the
+same rows as the sheet, with a drop-down list for the outcome, a tick box for a leak,
+task names and task types that complete as you type, and:
+
+- **filters**: a search box over project, branch, title, task and note, and lists for
+  status, project, product and outcome (`without an outcome` is the to-do list);
+- **sorting**: click a column heading, click again to reverse;
+- **changes in bulk**: tick rows (the box in the heading ticks every row shown), then
+  apply one task name or one outcome to all of them. That is the quick way to give two
+  sessions the same task when the second was a retry of the first.
+
+When you are done, press **Save sessions.csv**. Chrome and Edge ask where to save: choose
+the folder of your log. Other browsers put the file in your downloads folder. Then:
+
+```
+python -m cost_per_task.cli sessions import            # sessions.csv in the current folder
+python -m cost_per_task.cli sessions import PATH\sessions.csv
+```
+
+The file it saves is the labelling sheet, so the page, Excel and `cpt sessions list` can
+be mixed: the page starts from what `sessions.csv` already holds (`--sheet` names another
+file). The options of `cpt sessions list` apply: `--since`, `--new`, `--min-calls`,
+`--no-titles`, `--no-infer`, `--source`, `--path`, and `--out` for the name of the page.
+
+**What the page can and cannot do.** There is no server: the page is a file. It loads
+nothing from the network, not even a font, and it cannot connect to anything: its content
+security policy forbids every connection and lets only the tool's own script run,
+identified by its hash, so text hidden in a session title can neither run nor send
+anything. It stores nothing in the browser: what you enter lives in the tab until you
+save, and the page warns you before you close it with unsaved changes. It does hold your
+session titles and branch names, like the sheet: treat `sessions.html` as private and
+delete it when you are done.
 
 ## Step 3: import and read the report
 
@@ -169,7 +290,7 @@ can judge honestly: an outcome you are unsure of is better left empty.
 python -m cost_per_task.cli sessions import
 ```
 
-This adds the usage of every session you gave a task to `cpt-log.jsonl`, and your
+This adds the usage of every session you gave a task or an outcome to `cpt-log.jsonl`, and your
 outcomes to `cpt-labels.jsonl`, the files every other command reads by default, so the
 report needs no file options:
 

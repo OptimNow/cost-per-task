@@ -46,15 +46,16 @@ proxy, no API key and no extra spend:
 
 ```
 cpt sessions summary
-cpt sessions list
-cpt sessions import
+cpt sessions label --since 2026-09-14
 cpt report --cleanup-cost 25
 ```
 
 The summary shows what your sessions would cost at API prices, by month and by model, before
-any labelling. The list writes a sheet: give each session a task name and pass or fail, then
-run the import; the sheet is the labelling step. The import prints the report command for
-you. [Quick path](docs/claude-sessions.md#quick-path), six commands with what you should see, and
+any labelling. `label` shows your sessions one by one with a task name already suggested:
+type `p` for pass or `f` for fail, and next week `cpt sessions label --new` only asks about
+what happened since. Prefer a spreadsheet? `cpt sessions list`, fill the sheet, then
+`cpt sessions import`. Prefer clicking? `cpt sessions page` writes the same sheet as one
+offline HTML page with lists and filters. Either way ends by printing the report command for you. [Quick path](docs/claude-sessions.md#quick-path), six commands with what you should see, and
 [guide](docs/claude-sessions.md).
 
 <img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
@@ -215,6 +216,8 @@ local tokenizer.
 
 **Never logged.** API keys, headers, prompts and completions. Prompts often hold client data
 and have no place in a metrics file. A test checks this on every commit.
+[SECURITY.md](SECURITY.md) lists what the tool reads, what it keeps, the two connections it
+can open, the settings for a sensitive environment and how to check each statement.
 
 **Attempts that mix models**, such as an agent using a small model for side calls, are
 attributed to the model carrying the largest share of the cost.
@@ -242,11 +245,14 @@ labels, report and comparison are model-agnostic already.
 
 | Command | What it does |
 |---|---|
-| `cpt run --task-id T [--task-type X] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id |
+| `cpt run [--task-id T] [--task-type X] [--label-from-exit] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id. Without `--task-id` the task comes from the git branch (issue number, else branch name). `--label-from-exit` labels the attempt from the command's exit code, for a command that ends with its own check |
 | `cpt serve --port 4000 --task-id T` | run the proxy on its own and point any process at it |
 | `cpt label pass\|fail [--task T] [--attempt A] [--leak]` | label the latest or a named attempt; `--import labels.csv` labels in bulk |
 | `cpt sessions summary [--since D] [--by month] [--subscription P]` | what your Claude Code and Cowork sessions would cost at list prices, by product, model and period; no labels needed |
-| `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet |
+| `cpt sessions label [--new] [--since D] [--min-calls N]` | label Claude Code and Cowork sessions one by one in the terminal: a task is suggested from the issue, pull request or branch, you type pass or fail. `--new` keeps the sessions since last time |
+| `cpt sessions list [--new]`, then `cpt sessions import` | the same through a spreadsheet: rows sorted by what is left to do, task column pre-filled, `ok` and `ko` understood |
+| `cpt sessions page [--new]`, then `cpt sessions import` | the same in your browser: one self-contained HTML file with drop-down lists, filters, sorting and bulk edits. No server, nothing loaded, no connection possible; it saves the sheet for the import |
+| `cpt tasks [--json]` | one row per task: attempts, passes, fails, leaks, cost and the cost to the first pass |
 | `cpt import langfuse\|litellm FILE` | convert a usage export into cpt records |
 | `cpt report [--cleanup-cost K] [--harness H] [--json]` | the report, per model and task type |
 | `cpt explain [--attempt A] [--task T]` | where one attempt's cost went: by token class, by model and the most expensive steps |
@@ -304,6 +310,22 @@ The default run lists new, removed and repriced models with the catalogue date, 
 models the hub cannot price fully and flags cache-read prices that look wrong. Nothing is
 written without `--write`, so an upstream feed error never lands unseen.
 
+**A call keeps the price of its day.** `--write` does not overwrite the old rates: the
+previous table moves under `history` in the same file, with its own `as_of` date. Every
+report then prices each call with the snapshot in force on the day the call ran, so a price
+change never moves the cost of past sessions. The disclosure checklist lists the snapshots
+it used and how many calls each one priced. Two cases are stated rather than hidden:
+
+- a call older than the first snapshot of its model is priced with that first snapshot, and
+  the report counts those calls;
+- `as_of` is the day a price was read, not the day the vendor changed it. When you know the
+  vendor's date from a source you can cite, add `"effective_from": "YYYY-MM-DD"` to that
+  snapshot and it is used instead.
+
+To re-price everything on purpose, for instance "what would last quarter cost at today's
+rates", pass `--prices-as-of latest` or `--prices-as-of 2026-09-01` to `report`, `compare`,
+`explain`, `sessions list` or `sessions summary`. The checklist says so when you do.
+
 **Known limitation.** One rate per token class. Batch discounts, fast mode, the priority tier
 and data residency surcharges are not modelled, nor is OpenAI's long-context tier above 272K
 input tokens on GPT-5.5 and GPT-5.4: attempts that cross it are understated, and the report
@@ -338,6 +360,7 @@ cost-per-task/
 ├── README.md                 <- This file
 ├── LICENSE                   <- MIT
 ├── CHANGELOG.md              <- Release notes
+├── SECURITY.md               <- What is read, kept and sent; how releases are built; reporting a vulnerability
 ├── CLAUDE.md                 <- Project context and hard rules for AI assistants
 ├── assets/                   <- The README diagram and the social preview image
 ├── docs/                     <- Testing guide, Claude Code and Cowork guide
@@ -345,7 +368,7 @@ cost-per-task/
 ├── prices/                   <- Dated price tables, shipped inside the package too
 ├── src/cost_per_task/        <- The package: proxy, provider adapters, importers, pricing, statistics, report, cli
 ├── tests/                    <- pytest; proxy tests run against fake vendor servers
-└── .github/workflows/        <- CI, and the PyPI release on version tags
+└── .github/                  <- CI, the PyPI release on version tags, Dependabot for the pinned Actions
 ```
 
 [CLAUDE.md](CLAUDE.md) lists every module in `src/cost_per_task/` with its role.

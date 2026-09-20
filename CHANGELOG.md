@@ -6,6 +6,91 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Added
+- `cpt sessions label`: label sessions one by one in the terminal, with no spreadsheet. Each
+  session shows its project, start, duration, calls, cost, suggested task, branch and title;
+  one letter answers (pass, fail, leak, skip, rename the task, same task as the previous one,
+  task type, note, quit) and each answer is saved at once through the same code as the sheet
+  import. Titles are shown on screen only.
+- `cpt sessions page`: the labelling sheet as one self-contained HTML page for the browser,
+  with a drop-down list per outcome, filters (search, status, project, product, outcome),
+  sorting, completion of task names and types, and bulk changes on the ticked rows. It saves
+  the same `sessions.csv` that `cpt sessions import` reads, and starts from the entries an
+  existing sheet holds. No server and no dependency. The page loads nothing and can connect
+  to nothing (Content-Security-Policy `default-src 'none'`, script and style allowed by
+  hash only), stores nothing in the browser, puts transcript text in the page as text only,
+  and gives exported cells the same formula guard as the sheet.
+- `--new` on `cpt sessions list`, `cpt sessions page` and `cpt sessions label`: only the sessions since last time
+  (not in the log, and still active after the last session that is). Every run says how many
+  there are. `--min-calls N` leaves tiny sessions out.
+- A table of tasks in `cpt report`, on its own as `cpt tasks`, and under `tasks` in the JSON
+  output: attempts, passes, fails, leaks, open attempts, cost and cost to the first pass,
+  most expensive task first. The MCP tools still return aggregates only.
+- The labelling sheet gains `status` (new, open, labelled, imported, gone) and `minutes`.
+- Task ids inferred from the environment, so labelling is one column instead of two.
+  `cpt sessions list` pre-fills `task` from the issue number in the branch name, else the pull
+  request, else the branch, else the session on its own (project, day and the start of its
+  id, so two sessions are never merged on a hunch); the new `branch` and `task_source`
+  columns show the signal. `--no-infer` keeps the old empty column. Session titles are never used.
+- `cpt run` no longer needs `--task-id` inside a git repository: the task comes from the
+  branch. `--label-from-exit` labels the attempt pass or fail from the command's exit code,
+  for commands that end with their own check.
+- The log records `task_source` for inferred task ids, and the disclosure checklist gains a
+  `task identity` line: tasks stated by hand, tasks inferred, by signal. Outcomes are never
+  inferred.
+- Dated price snapshots. `cpt prices refresh --write` keeps the previous table under `history`
+  in the same file instead of overwriting it, and every command prices each call with the
+  snapshot in force on the day the call ran. A price change no longer moves the cost of past
+  sessions. When no rate moved, the new table carries `effective_from` (the date the rates
+  are known from) rather than an identical snapshot. A snapshot may state `effective_from`
+  by hand when the vendor's date is known from a citable source.
+- The disclosure checklist, `cpt explain`, `cpt sessions summary` and the JSON output list the
+  snapshots used with the calls each one priced, and count the calls older than the first
+  snapshot of their model (priced with that first snapshot).
+- `--prices-as-of DATE|latest` on `report`, `compare`, `explain`, `sessions list` and
+  `sessions summary`: price every call at the rates of one day, on purpose.
+- `prices/anthropic.json` carries its two earlier committed versions (2026-08-27, 2026-09-02)
+  as history, restored from the repository. No rate differs between them.
+
+### Changed
+- The labelling sheet is ordered by what is left to do (status, then newest first) and its
+  columns are regrouped: what identifies a session, then what you fill in, then ids and
+  other reference columns. Sheets written by earlier versions still import.
+- Outcomes typed as `ok`, `yes`, `oui`, `passed`, `ko`, `no`, `non` or `failed` are understood,
+  in the sheet and in `cpt label --import`; a word that is neither is reported with its row
+  number. `cpt label --import` checks every row before writing the first one.
+- The report's attempt table widens its task column up to 36 characters and shortens a longer
+  id from the left, so `project/issue-142` stays readable.
+- `cpt sessions import` leaves out a session whose task is still the suggested one and that
+  has no outcome (it was never looked at); `--include-unlabelled` imports it anyway. A task
+  typed by hand imports with or without an outcome, as before.
+- The `project` column of a session run in a Claude Code worktree is the repository's name,
+  not the worktree folder's.
+- A model the hub no longer lists keeps its last known rates (they stay under `history`);
+  it used to become unpriced after `--write`.
+- `as_of` and `effective_from` must be `YYYY-MM-DD` dates; anything else is rejected at load.
+
+### Security
+- `SECURITY.md`: what the tool reads, keeps and sends, what it does not protect against, the
+  settings for a sensitive environment, how releases are built, and commands to check each
+  statement.
+- The labelling sheet can no longer carry a formula: a cell that starts with `=`, `+`, `-` or
+  `@` (a session title is written by a model from what it read) is written behind an
+  apostrophe and read back without it.
+- A request whose path `http.client` rejects gets a 502 instead of a traceback that quoted the
+  URL, query string included.
+- The proxy refuses an upstream URL that carries credentials, without echoing it, and warns
+  when an upstream outside the machine is plain `http://`.
+- `cpt prices refresh --url` accepts web addresses only; `urlopen` would also have read
+  `file://`.
+- `cpt sessions list --no-infer` leaves the `branch` column empty too.
+- `ci.yml` pins its Actions to commits and runs with a read-only token, as the release
+  workflow already did; Dependabot keeps the pins current; `.gitignore` lists `.env`, `*.pem`
+  and `*.key`.
+- The proxy's two console messages (upstream error, stream without a usage block) print the
+  request path without its query string. A gateway that takes the key as `?api_key=` could
+  otherwise leave it in a redirected stderr. The usage log never held URLs and is unchanged.
+
 ## [0.6.0] - 2026-09-16
 
 ### Added

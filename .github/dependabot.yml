@@ -1,0 +1,8 @@
+# Keeps the commit-pinned GitHub Actions current. The package itself has no runtime
+# dependency to update.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

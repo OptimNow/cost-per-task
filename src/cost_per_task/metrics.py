@@ -46,6 +46,7 @@ class Attempt:
     efforts: set[str] = field(default_factory=set)
     outcome: str | None = None  # pass | fail | None when unlabelled
     leaked: bool = False
+    task_source: str = "manual"  # or the signal the task id was inferred from
 
     @property
     def passed(self) -> bool:
@@ -117,10 +118,63 @@ def build_attempts(
                 efforts={s.effort for s in steps if s.effort},
                 outcome=outcome,
                 leaked=leaked,
+                task_source=next((s.task_source for s in steps if s.task_source), None) or "manual",
             )
         )
     attempts.sort(key=lambda a: (a.task_id, a.first_timestamp, a.attempt_id))
     return attempts
+
+
+@dataclass
+class TaskSummary:
+    """One task across all its attempts, whatever the model: what it cost and whether it
+    got solved. ``cost_to_first_pass`` adds up the attempts in time order up to and
+    including the first pass; None while no attempt has passed."""
+
+    task_id: str
+    attempts: int
+    passes: int
+    fails: int
+    leaks: int
+    open: int  # attempts without an outcome yet
+    cost: float
+    cost_to_first_pass: float | None
+    source: str  # manual, or the signal the task id was inferred from
+    first_timestamp: str
+    last_timestamp: str
+
+
+def summarise_tasks(attempts: list[Attempt]) -> list[TaskSummary]:
+    """Most expensive task first, then by id."""
+    by_task: dict[str, list[Attempt]] = defaultdict(list)
+    for attempt in attempts:
+        by_task[attempt.task_id].append(attempt)
+    tasks = []
+    for task_id, members in by_task.items():
+        members.sort(key=lambda a: (a.first_timestamp, a.attempt_id))
+        to_first_pass, running = None, 0.0
+        for attempt in members:
+            running += attempt.cost
+            if attempt.passed:
+                to_first_pass = running
+                break
+        tasks.append(
+            TaskSummary(
+                task_id=task_id,
+                attempts=len(members),
+                passes=sum(1 for a in members if a.outcome == "pass"),
+                fails=sum(1 for a in members if a.outcome == "fail"),
+                leaks=sum(1 for a in members if a.leaked),
+                open=sum(1 for a in members if a.outcome is None),
+                cost=sum(a.cost for a in members),
+                cost_to_first_pass=to_first_pass,
+                source=members[0].task_source,
+                first_timestamp=members[0].first_timestamp,
+                last_timestamp=members[-1].first_timestamp,
+            )
+        )
+    tasks.sort(key=lambda t: (-t.cost, t.task_id))
+    return tasks
 
 
 @dataclass
@@ -162,6 +216,9 @@ class GroupSummary:
     # Mean C_attempt over labelled attempts only: the E[C] that CPT_solved
     # divides by p. None when nothing is labelled.
     labelled_mean_cost: float | None = None
+    # Tasks per origin of their id: 'manual' (stated by a person) or the signal it was
+    # inferred from (issue, pr, branch, session).
+    task_sources: dict[str, int] = field(default_factory=dict)
 
 
 def _cpt_solved(attempts: list[Attempt]) -> float | None:
@@ -306,6 +363,7 @@ def _summarise_group(
         ),
         table_cost_for_reported=sum(a.cost for a in with_reported) if with_reported else None,
         labelled_mean_cost=labelled_mean_cost,
+        task_sources=dict(Counter({a.task_id: a.task_source for a in members}.values())),
     )
 
 

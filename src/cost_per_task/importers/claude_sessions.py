@@ -22,8 +22,10 @@ Rules learnt from real transcripts (Claude Code 2.1.x, September 2026):
 - model ``<synthetic>`` marks messages generated locally without an API call
 - a response seen in two sessions (history copied on resume) is counted once
 
-Only usage, model, effort, tool names, timestamps, the product and the name of
-the working folder are read. Prompts, answers and tool inputs are never copied.
+Only usage, model, effort, tool names, timestamps, the product, the name of
+the working folder, the git branch and the pull request number are read.
+Prompts, answers and tool inputs are never copied. The branch and the pull
+request number only serve to suggest a task id (``taskid.suggest_task``).
 The session title (desktop) or output file names (Cowork) are read only for the
 labelling sheet, never for the log, and can be left out.
 
@@ -44,9 +46,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from ..labels import Label
-from ..pricing import PricingTable, price_step
+from ..labels import Label, normalise_outcome
+from ..pricing import PricingTable, describe_usage, price_step, prices_line
 from ..schema import StepRecord
+from ..taskid import DEFAULT_BRANCHES, MANUAL, project_name, source_of, suggest_task
 
 PRODUCTS = {
     "claude-desktop": "Claude Code desktop",
@@ -61,10 +64,15 @@ _STANDARD_TIERS = (None, "standard")
 # Older transcripts (March to May 2026) write an empty string here.
 _STANDARD_GEO = (None, "", "not_available", "global")
 
+# What to read sits left of what to fill in; ids and other reference columns go last.
 SHEET_COLUMNS = [
-    "session_id", "product", "started", "ended", "project", "title", "main_model",
-    "models", "calls", "api_cost_usd", "task", "task_type", "outcome", "leaked", "note",
+    "status", "started", "minutes", "project", "branch", "title", "calls", "api_cost_usd",
+    "main_model", "task", "task_source", "task_type", "outcome", "leaked", "note",
+    "product", "ended", "models", "session_id",
 ]
+# new: first time in the sheet; open: seen before, still without an outcome; labelled:
+# has an outcome, not in the log yet; imported: in the log; gone: its transcript was deleted.
+STATUS_ORDER = {"new": 0, "open": 1, "labelled": 2, "imported": 3, "gone": 4}
 USER_COLUMNS = ("task", "task_type", "outcome", "leaked", "note")
 _YES = {"yes", "y", "true", "1", "x", "oui", "o", "igen", "i"}
 _NO = {"", "no", "n", "false", "0", "non", "nem"}
@@ -127,6 +135,8 @@ class Session:
     title: str = ""
     versions: set[str] = field(default_factory=set)
     calls: dict[tuple, Call] = field(default_factory=dict)
+    branches: Counter = field(default_factory=Counter)  # transcript lines per git branch
+    pr_number: int | None = None
 
     @property
     def product(self) -> str:
@@ -147,7 +157,34 @@ class Session:
         stamps = [c.timestamp for c in self.calls.values() if c.timestamp]
         return max(stamps) if stamps else ""
 
-    def records(self, task_id: str, task_type: str | None = None) -> list[StepRecord]:
+    @property
+    def minutes(self) -> int:
+        """From the first model call to the last, in whole minutes."""
+        if not self.started or not self.ended:
+            return 0
+        span = datetime.fromisoformat(self.ended) - datetime.fromisoformat(self.started)
+        return int(span.total_seconds() // 60)
+
+    @property
+    def branch(self) -> str:
+        """The branch most of the session ran on, default branches aside."""
+        named = [(n, b) for b, n in self.branches.items() if b not in DEFAULT_BRANCHES]
+        return max(named)[1] if named else ""
+
+    def suggested_task(self) -> tuple[str, str] | None:
+        # Most Cowork sessions work in a folder called 'outputs', which names nothing.
+        project = "cowork" if self.source == "cowork" and self.project in ("", "outputs") else self.project
+        return suggest_task(
+            branch=self.branch,
+            pr_number=self.pr_number,
+            project=project,
+            day=_local(self.started)[:10],
+            session=self.session_id.removeprefix("local_"),
+        )
+
+    def records(
+        self, task_id: str, task_type: str | None = None, task_source: str | None = None
+    ) -> list[StepRecord]:
         out = []
         for step, call in enumerate(self.ordered_calls(), start=1):
             out.append(
@@ -169,6 +206,7 @@ class Session:
                     latency_ms=0,
                     effort=call.effort,
                     task_type=task_type,
+                    task_source=task_source,
                 )
             )
         return out
@@ -300,7 +338,11 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                 session.entrypoint = entry["entrypoint"]
             cwd = entry.get("cwd")
             if not session.project and isinstance(cwd, str) and cwd.strip("\\/"):
-                session.project = re.split(r"[\\/]", cwd.rstrip("\\/"))[-1]
+                session.project = project_name(cwd)
+            if isinstance(entry.get("gitBranch"), str):
+                session.branches[entry["gitBranch"].strip()] += 1
+            if isinstance(entry.get("prNumber"), int) and not isinstance(entry["prNumber"], bool):
+                session.pr_number = entry["prNumber"]
             if isinstance(entry.get("version"), str):
                 session.versions.add(entry["version"])
             if (
@@ -366,16 +408,51 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                     call.tool_names.append(name)
 
 
-def write_sheet(
-    path: str | Path,
+# A cell that opens with one of these runs as a formula when Excel or LibreOffice
+# opens the CSV. Titles, folder and branch names come from outside the tool, so such
+# a cell is written behind an apostrophe (it then shows as text) and read back without.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _cell_out(value: str) -> str:
+    return "'" + value if value.startswith(_FORMULA_START) else value
+
+
+def _cell_in(value: str) -> str:
+    return value[1:] if value.startswith("'") and value[1:].startswith(_FORMULA_START) else value
+
+
+def has_user_input(row: dict) -> bool:
+    """True when a sheet row carries something a person typed: any of their columns, or a
+    task that is not the suggested one (sheets from before ``task_source`` count as typed)."""
+    if any(row.get(c) for c in USER_COLUMNS if c != "task"):
+        return True
+    return bool(row.get("task")) and row.get("task_source", MANUAL) in (MANUAL, "")
+
+
+def select_new(sessions: dict[str, Session], imported: set[str]) -> tuple[dict[str, Session], str]:
+    """The sessions to look at since the last time: not in the log, and still active after
+    the last session that is. Returns them with that moment (UTC ISO, '' when the log holds
+    no session yet, in which case every session is new)."""
+    cutoff = max((s.ended for sid, s in sessions.items() if sid in imported), default="")
+    fresh = {sid: s for sid, s in sessions.items() if sid not in imported and s.ended > cutoff}
+    return fresh, cutoff
+
+
+def sheet_rows(
     sessions: dict[str, Session],
     *,
     table: PricingTable | None = None,
     existing: dict[str, dict] | None = None,
-) -> tuple[int, int]:
-    """Write the labelling sheet, newest session first. Rows already in an
-    existing sheet keep what the user typed, including rows for sessions whose
-    transcripts are gone. Returns (rows written, rows carrying user input)."""
+    infer: bool = True,
+    imported: set[str] | frozenset[str] = frozenset(),
+) -> list[dict]:
+    """The rows of the labelling sheet, shared by the CSV and the browser page: what is
+    left to do first (``status`` new, then open), newest session first within each status.
+    Rows already in an existing sheet keep what the user typed, including rows for
+    sessions whose transcripts are gone. With ``infer``, an empty task cell gets the
+    suggested task id and ``task_source`` says where it came from; the outcome is never
+    suggested. ``imported`` holds the session ids already in the log."""
     existing = existing or {}
     rows: list[dict] = []
     for session in sorted(sessions.values(), key=lambda s: s.started, reverse=True):
@@ -388,7 +465,9 @@ def write_sheet(
             "product": session.product,
             "started": _local(session.started),
             "ended": _local(session.ended),
+            "minutes": str(session.minutes),
             "project": session.project,
+            "branch": session.branch if infer else "",  # only read to suggest a task
             "title": session.title,
             "main_model": session.main_model(table),
             "models": " ".join(session.models()),
@@ -398,18 +477,46 @@ def write_sheet(
         previous = existing.get(session.session_id, {})
         for column in USER_COLUMNS:
             row[column] = previous.get(column, "")
+        suggestion = session.suggested_task()
+        if infer and not row["task"] and suggestion:
+            row["task"] = suggestion[0]
+        row["task_source"] = source_of(row["task"], suggestion) if row["task"] else ""
+        if session.session_id in imported:
+            row["status"] = "imported"
+        elif row["outcome"]:
+            row["status"] = "labelled"
+        else:
+            row["status"] = "open" if previous else "new"
         rows.append(row)
     seen = {r["session_id"] for r in rows}
-    rows.extend(
-        {c: old.get(c, "") for c in SHEET_COLUMNS} for sid, old in existing.items() if sid not in seen
-    )
+    for sid, old in existing.items():
+        if sid not in seen:
+            row = {c: old.get(c, "") for c in SHEET_COLUMNS}
+            row["status"] = "imported" if sid in imported else "gone"
+            rows.append(row)
+    # Stable sort: the newest-first order above holds within each status.
+    rows.sort(key=lambda r: STATUS_ORDER.get(r["status"], 9))
+    return rows
+
+
+def write_sheet(
+    path: str | Path,
+    sessions: dict[str, Session],
+    *,
+    table: PricingTable | None = None,
+    existing: dict[str, dict] | None = None,
+    infer: bool = True,
+    imported: set[str] | frozenset[str] = frozenset(),
+) -> tuple[int, int]:
+    """Write ``sheet_rows`` as the CSV that Excel opens in any locale. Returns (rows
+    written, rows carrying user input)."""
+    rows = sheet_rows(sessions, table=table, existing=existing, infer=infer, imported=imported)
     with open(path, "w", encoding="utf-8-sig", newline="") as handle:
         handle.write("sep=,\r\n")  # tells Excel the delimiter whatever the regional settings
         writer = csv.DictWriter(handle, fieldnames=SHEET_COLUMNS, lineterminator="\r\n")
         writer.writeheader()
-        writer.writerows(rows)
-    labelled = sum(1 for r in rows if any(r.get(c) for c in USER_COLUMNS))
-    return len(rows), labelled
+        writer.writerows({k: _cell_out(v) for k, v in row.items()} for row in rows)
+    return len(rows), sum(1 for r in rows if has_user_input(r))
 
 
 def read_sheet(path: str | Path) -> list[dict]:
@@ -429,7 +536,7 @@ def read_sheet(path: str | Path) -> list[dict]:
         delimiter = max((",", ";", "\t"), key=header.count)
     reader = csv.DictReader(io.StringIO("\n".join(lines)), delimiter=delimiter)
     rows = [
-        {(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k is not None}
+        {(k or "").strip().lower(): _cell_in((v or "").strip()) for k, v in row.items() if k is not None}
         for row in reader
     ]
     if rows and "session_id" not in rows[0]:
@@ -443,6 +550,7 @@ class SheetImport:
     labels: list[Label] = field(default_factory=list)
     imported: list[Session] = field(default_factory=list)
     blank: int = 0
+    inferred_only: int = 0  # suggested task, no outcome: left out unless asked for
     already_imported: int = 0
     unchanged_labels: int = 0
     missing: list[str] = field(default_factory=list)
@@ -454,8 +562,13 @@ def import_sheet(
     sessions: dict[str, Session],
     imported_tasks: dict[str, str],
     existing_labels: dict[tuple[str, str], Label] | None = None,
+    include_unlabelled: bool = False,
 ) -> SheetImport:
     """Turn the rows that have a task into step records and labels.
+
+    A row whose task is still the suggested one and that has no outcome was
+    never looked at: it is left out unless ``include_unlabelled`` is set. A
+    task typed by hand imports with or without an outcome, as before.
 
     ``imported_tasks`` maps attempt ids already in the log to their task, so a
     second import adds nothing twice; labels may still change on a re-import.
@@ -463,40 +576,51 @@ def import_sheet(
     existing_labels = existing_labels or {}
     result = SheetImport()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for row in rows:
+    # Row numbers as Excel shows them: the header is row 1, the sep= line is not displayed.
+    for number, row in enumerate(rows, start=2):
         sid, task = row.get("session_id", ""), row.get("task", "")
         if not sid:
             continue
         if not task:
             result.blank += 1
             continue
-        outcome = row.get("outcome", "").lower()
-        if outcome not in ("", "pass", "fail"):
-            result.problems.append(f"{sid}: outcome '{row.get('outcome')}' is not pass or fail; not labelled")
+        where = f"row {number} ({sid[:14]})"
+        outcome = normalise_outcome(row.get("outcome"))
+        if outcome is None:
+            result.problems.append(
+                f"{where}: outcome '{row.get('outcome')}' is not pass or fail (ok, ko, oui and non "
+                "are understood too); not labelled"
+            )
             outcome = ""
         leaked_text = row.get("leaked", "").lower()
         leaked = leaked_text in _YES
         if not leaked and leaked_text not in _NO:
-            result.problems.append(f"{sid}: leaked '{row.get('leaked')}' is not yes or no; read as no")
+            result.problems.append(f"{where}: leaked '{row.get('leaked')}' is not yes or no; read as no")
         if leaked and outcome != "pass":
             result.problems.append(
-                f"{sid}: a leak is an accepted pass that was wrong; leak ignored on '{outcome or 'unlabelled'}'"
+                f"{where}: a leak is an accepted pass that was wrong; leak ignored on "
+                f"'{outcome or 'unlabelled'}'"
             )
             leaked = False
+
+        session = sessions.get(sid)
+        source = source_of(task, session.suggested_task() if session else None)
+        if source != MANUAL and not outcome and not include_unlabelled and sid not in imported_tasks:
+            result.inferred_only += 1
+            continue
 
         if sid in imported_tasks:
             result.already_imported += 1
             task_for_label = imported_tasks[sid]
             if task_for_label != task:
                 result.problems.append(
-                    f"{sid}: already imported under task '{task_for_label}'; the new task name is ignored"
+                    f"{where}: already imported under task '{task_for_label}'; the new task name is ignored"
                 )
         else:
-            session = sessions.get(sid)
             if session is None:
                 result.missing.append(sid)
                 continue
-            result.records.extend(session.records(task, row.get("task_type") or None))
+            result.records.extend(session.records(task, row.get("task_type") or None, source))
             result.imported.append(session)
             imported_tasks[sid] = task
             task_for_label = task
@@ -590,9 +714,11 @@ def summarise_sessions(
     total = 0.0
     stamps: list[str] = []
     ranked: list[tuple[Session, float]] = []
+    priced: list[StepRecord] = []
     for session in sessions.values():
         session_cost = 0.0
         for record in session.records("-"):
+            priced.append(record)
             cost = price_step(record, table)
             if cost is None:
                 unpriced += 1
@@ -619,6 +745,7 @@ def summarise_sessions(
                 stamps.append(local)
         ranked.append((session, session_cost))
     ranked.sort(key=lambda item: (-item[1], item[0].started))
+    table.usage = describe_usage(priced, table)
 
     def rows(name: str, *, by_cost: bool) -> list[tuple[str, int, int, float]]:
         items = [(key, len(b[0]), b[1], b[2]) for key, b in groups[name].items()]
@@ -676,11 +803,16 @@ def render_sessions_summary(
     when = f", {summary.first} to {summary.last} local time" if summary.first else ""
     lines = [
         f"{summary.sessions} sessions, {summary.calls:,} model calls{when}",
-        f"cost at API list prices as of {table.as_of}: {summary.cost:,.2f} {currency}",
+        f"cost at API list prices, {prices_line(table)}: {summary.cost:,.2f} {currency}",
         "  on a subscription you are not billed per token: this is a shadow cost, not a bill",
     ]
     if summary.unpriced_calls:
         lines.append(f"  {summary.unpriced_calls} calls on models without a price count as zero")
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"  {table.usage.predating:,} calls are older than the first price snapshot of their "
+            "model and are priced with it"
+        )
     t = summary.tokens
     prompt = t["input"] + t["cache_read"] + t["cache_write"]
     hit = f" ({100 * t['cache_read'] / prompt:.1f}% of prompt tokens)" if prompt else ""
