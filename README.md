@@ -215,6 +215,8 @@ local tokenizer.
 
 **Never logged.** API keys, headers, prompts and completions. Prompts often hold client data
 and have no place in a metrics file. A test checks this on every commit.
+[SECURITY.md](SECURITY.md) lists what the tool reads, what it keeps, the two connections it
+can open, the settings for a sensitive environment and how to check each statement.
 
 **Attempts that mix models**, such as an agent using a small model for side calls, are
 attributed to the model carrying the largest share of the cost.
@@ -354,6 +356,7 @@ cost-per-task/
 ├── README.md                 <- This file
 ├── LICENSE                   <- MIT
 ├── CHANGELOG.md              <- Release notes
+├── SECURITY.md               <- What is read, kept and sent; how releases are built; reporting a vulnerability
 ├── CLAUDE.md                 <- Project context and hard rules for AI assistants
 ├── assets/                   <- The README diagram and the social preview image
 ├── docs/                     <- Testing guide, Claude Code and Cowork guide
@@ -361,7 +364,7 @@ cost-per-task/
 ├── prices/                   <- Dated price tables, shipped inside the package too
 ├── src/cost_per_task/        <- The package: proxy, provider adapters, importers, pricing, statistics, report, cli
 ├── tests/                    <- pytest; proxy tests run against fake vendor servers
-└── .github/workflows/        <- CI, and the PyPI release on version tags
+└── .github/                  <- CI, the PyPI release on version tags, Dependabot for the pinned Actions
 ```
 
 [CLAUDE.md](CLAUDE.md) lists every module in `src/cost_per_task/` with its role.

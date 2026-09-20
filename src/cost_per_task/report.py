@@ -74,9 +74,16 @@ def _group_name(summary: GroupSummary) -> str:
     return summary.model if summary.task_type is None else f"{summary.model} [{summary.task_type}]"
 
 
+def _tail(text: str, width: int) -> str:
+    """Shortened from the left: the end of an id (``.../pr-14``) is the telling part."""
+    return text if len(text) <= width else "..." + text[-(width - 3):]
+
+
 def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
+    # Inferred task ids carry the project (shop/issue-123): give them room, up to a point.
+    task_width = min(max([12] + [len(a.task_id) for a in attempts]), 36)
     header = (
-        f"{'task':<12} {'attempt':<26} {'model':<28} {'type':<10} {'steps':>5} "
+        f"{'task':<{task_width}} {'attempt':<26} {'model':<28} {'type':<10} {'steps':>5} "
         f"{'cost':>10} {'outcome':<9}"
     )
     lines = [header, "-" * len(header)]
@@ -85,7 +92,7 @@ def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
         if a.leaked:
             outcome += "+leak"
         lines.append(
-            f"{a.task_id[:12]:<12} {a.attempt_id[:26]:<26} {a.model[:28]:<28} "
+            f"{_tail(a.task_id, task_width):<{task_width}} {a.attempt_id[:26]:<26} {a.model[:28]:<28} "
             f"{(a.task_type or '-')[:10]:<10} {a.steps:>5} {a.cost:>10.4f} {outcome:<9}"
         )
     return lines

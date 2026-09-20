@@ -15,3 +15,8 @@ level2-labels.jsonl
 sessions*.csv
 sessions-log.jsonl
 sessions-labels.jsonl
+# Never needed by this project; listed so that a stray one is not committed.
+.env
+.env.*
+*.pem
+*.key

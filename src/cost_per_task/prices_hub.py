@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+from urllib.parse import urlsplit
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -77,6 +78,9 @@ PROVIDERS: dict[str, ProviderRules] = {
 
 
 def fetch_hub(url: str = HUB_URL, timeout: float = 30.0) -> dict:
+    # urlopen also speaks file:// and ftp://; a price catalogue comes over the web.
+    if urlsplit(url).scheme not in ("https", "http"):
+        raise ValueError("the hub URL must start with https:// (use --from-file for a saved copy)")
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))

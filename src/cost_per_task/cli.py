@@ -290,9 +290,25 @@ def _upstreams(args: argparse.Namespace) -> dict[str, str]:
     return {"anthropic": args.anthropic_upstream, "openai": args.openai_upstream}
 
 
+def _start_proxy(**options):
+    """The proxy, or None after saying why not. Warns when an upstream is plain HTTP."""
+    try:
+        server = create_proxy(**options)
+    except ValueError as exc:
+        print(f"cpt: {exc}", file=sys.stderr)
+        return None
+    for name, host in server.cleartext_upstreams():
+        print(
+            f"cpt: warning: the {name} upstream ({host}) is plain HTTP: API keys and prompts "
+            "travel unencrypted to it; use an https:// URL",
+            file=sys.stderr,
+        )
+    return server
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     attempt_id = args.attempt_id or _new_attempt_id()
-    server = create_proxy(
+    server = _start_proxy(
         upstreams=_upstreams(args),
         log_path=args.log,
         task_id=args.task_id,
@@ -301,6 +317,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         inject_usage=not args.no_inject_usage,
         port=args.port,
     )
+    if server is None:
+        return 2
     host, port = server.server_address[:2]
     print(f"cpt proxy on http://{host}:{port}")
     print(f"log: {args.log}  task: {args.task_id}  attempt: {attempt_id}")
@@ -340,7 +358,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"cpt: task id inferred from the git {task_source}: {args.task_id}")
 
     attempt_id = args.attempt_id or _new_attempt_id()
-    server = create_proxy(
+    server = _start_proxy(
         upstreams=_upstreams(args),
         log_path=args.log,
         task_id=args.task_id,
@@ -350,6 +368,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         inject_usage=not args.no_inject_usage,
         port=0,
     )
+    if server is None:
+        return 2
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

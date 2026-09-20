@@ -32,6 +32,8 @@ versioning, with the minor digit bumped for any user-visible feature.
   as history, restored from the repository. No rate differs between them.
 
 ### Changed
+- The report's attempt table widens its task column up to 36 characters and shortens a longer
+  id from the left, so `project/issue-142` stays readable.
 - `cpt sessions import` leaves out a session whose task is still the suggested one and that
   has no outcome (it was never looked at); `--include-unlabelled` imports it anyway. A task
   typed by hand imports with or without an outcome, as before.
@@ -42,6 +44,22 @@ versioning, with the minor digit bumped for any user-visible feature.
 - `as_of` and `effective_from` must be `YYYY-MM-DD` dates; anything else is rejected at load.
 
 ### Security
+- `SECURITY.md`: what the tool reads, keeps and sends, what it does not protect against, the
+  settings for a sensitive environment, how releases are built, and commands to check each
+  statement.
+- The labelling sheet can no longer carry a formula: a cell that starts with `=`, `+`, `-` or
+  `@` (a session title is written by a model from what it read) is written behind an
+  apostrophe and read back without it.
+- A request whose path `http.client` rejects gets a 502 instead of a traceback that quoted the
+  URL, query string included.
+- The proxy refuses an upstream URL that carries credentials, without echoing it, and warns
+  when an upstream outside the machine is plain `http://`.
+- `cpt prices refresh --url` accepts web addresses only; `urlopen` would also have read
+  `file://`.
+- `cpt sessions list --no-infer` leaves the `branch` column empty too.
+- `ci.yml` pins its Actions to commits and runs with a read-only token, as the release
+  workflow already did; Dependabot keeps the pins current; `.gitignore` lists `.env`, `*.pem`
+  and `*.key`.
 - The proxy's two console messages (upstream error, stream without a usage block) print the
   request path without its query string. A gateway that takes the key as `?api_key=` could
   otherwise leave it in a redirected stderr. The usage log never held URLs and is unchanged.

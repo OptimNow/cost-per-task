@@ -393,6 +393,20 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                     call.tool_names.append(name)
 
 
+# A cell that opens with one of these runs as a formula when Excel or LibreOffice
+# opens the CSV. Titles, folder and branch names come from outside the tool, so such
+# a cell is written behind an apostrophe (it then shows as text) and read back without.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _cell_out(value: str) -> str:
+    return "'" + value if value.startswith(_FORMULA_START) else value
+
+
+def _cell_in(value: str) -> str:
+    return value[1:] if value.startswith("'") and value[1:].startswith(_FORMULA_START) else value
+
+
 def write_sheet(
     path: str | Path,
     sessions: dict[str, Session],
@@ -419,7 +433,7 @@ def write_sheet(
             "started": _local(session.started),
             "ended": _local(session.ended),
             "project": session.project,
-            "branch": session.branch,
+            "branch": session.branch if infer else "",  # only read to suggest a task
             "title": session.title,
             "main_model": session.main_model(table),
             "models": " ".join(session.models()),
@@ -442,7 +456,7 @@ def write_sheet(
         handle.write("sep=,\r\n")  # tells Excel the delimiter whatever the regional settings
         writer = csv.DictWriter(handle, fieldnames=SHEET_COLUMNS, lineterminator="\r\n")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows({k: _cell_out(v) for k, v in row.items()} for row in rows)
     labelled = sum(
         1
         for r in rows
@@ -469,7 +483,7 @@ def read_sheet(path: str | Path) -> list[dict]:
         delimiter = max((",", ";", "\t"), key=header.count)
     reader = csv.DictReader(io.StringIO("\n".join(lines)), delimiter=delimiter)
     rows = [
-        {(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k is not None}
+        {(k or "").strip().lower(): _cell_in((v or "").strip()) for k, v in row.items() if k is not None}
         for row in reader
     ]
     if rows and "session_id" not in rows[0]:

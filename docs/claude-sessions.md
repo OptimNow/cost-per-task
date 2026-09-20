@@ -18,8 +18,11 @@ There is no proxy to run, no API key to set and nothing extra to pay.
 | Session title (desktop) or names of files a Cowork session produced | yes, unless you pass `--no-titles` | the sheet only, never the log |
 | Your prompts, Claude's answers, tool inputs, file contents | never | nowhere |
 
-The sheet can contain session titles, so treat it as private. The log and labels
-files contain no content and can be shared with the numbers.
+The sheet can contain session titles and branch names, so treat it as private. The log
+and labels files hold no prompt, answer or title. They do hold the task names you
+imported (a suggested one is built from the folder and branch names), model names, tool
+names (which include the names of your MCP servers) and the notes you typed, so read
+them once before sharing them with the numbers. `SECURITY.md` has the full inventory.
 
 ## Where the transcripts are
 
@@ -141,7 +144,7 @@ minute. Useful options:
 | `--since 2026-09-01` | only sessions active on or after that date |
 | `--source code` or `--source cowork` | only Claude Code, or only Cowork |
 | `--no-titles` | leave session titles and Cowork file names out of the sheet |
-| `--no-infer` | leave the `task` column empty instead of suggesting one |
+| `--no-infer` | leave the `task` column empty instead of suggesting one, and the `branch` column with it |
 | `--out other.csv` | write the sheet somewhere else |
 | `--path FOLDER` | read transcripts from this folder instead of the usual places |
 

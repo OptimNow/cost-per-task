@@ -176,6 +176,12 @@ class ProxyServer(ThreadingHTTPServer):
         self.routes: dict[str, SplitResult] = {
             name: urlsplit(url) for name, url in upstreams.items()
         }
+        for name, split in self.routes.items():
+            if split.username or split.password:
+                # Never echo the URL: it holds the credentials.
+                raise ValueError(
+                    f"the {name} upstream URL carries credentials; send them in headers instead"
+                )
         self.provider_names = {
             name: provider_label(name, split) for name, split in self.routes.items()
         }
@@ -193,6 +199,15 @@ class ProxyServer(ThreadingHTTPServer):
         self.openrouter_usage = openrouter_usage
         self.captured_count = 0
         self._step_counter = itertools.count(1)
+
+    def cleartext_upstreams(self) -> list[tuple[str, str]]:
+        """(provider, host) of every upstream reached over plain HTTP outside this
+        machine: API keys and prompts travel unencrypted to those."""
+        return [
+            (name, split.hostname or "")
+            for name, split in self.routes.items()
+            if split.scheme == "http" and split.hostname not in ("127.0.0.1", "localhost", "::1")
+        ]
 
     def next_step_id(self) -> int:
         return next(self._step_counter)
@@ -263,7 +278,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self._relay_stream(response, started, adapter, provider_name)
             else:
                 self._relay_buffered(response, started, adapter, provider_name)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            # The class name only: an http.client message can quote the request URL.
             self.send_error(502, f"upstream unreachable: {exc.__class__.__name__}")
         finally:
             upstream.close()
