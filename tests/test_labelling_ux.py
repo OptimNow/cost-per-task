@@ -239,7 +239,7 @@ def test_labeller_end_to_end(shop, monkeypatch, capsys):
     assert cli.main(["sessions", "label", "--no-titles", *scan]) == 0
     out = capsys.readouterr().out
     assert "1 sessions without an outcome" in out and "SECRET-TITLE" not in out
-    assert "labelled 0 of 1 sessions" in out
+    assert "labelled 0 of 1 sessions, so nothing was written" in out
     assert len(read_jsonl(tmp_path / "cpt-log.jsonl")) == 4
 
     # D is newer than everything in the log, so --new still offers it; input ending is a quit.
@@ -307,3 +307,18 @@ def test_mcp_tools_still_return_no_task_ids(shop, monkeypatch, capsys):
                          prices=scan[-1], resamples=10)
     assert "tasks" not in result
     assert "shop/issue-123" not in json.dumps(result)
+
+
+# --- a first run in an empty folder ----------------------------------------------
+
+
+@pytest.mark.parametrize("command", [["tasks"], ["report"], ["compare", "a", "b"], ["explain"], ["label", "pass"]])
+def test_commands_say_how_a_log_comes_to_be_when_there_is_none(tmp_path, monkeypatch, capsys, command):
+    """Seen in a first test of the labeller: every session skipped, then cpt tasks answered
+    with the operating system's Errno 2."""
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(command) == 1
+    err = capsys.readouterr().err
+    assert "there is no usage log yet: cpt-log.jsonl does not exist in this folder" in err
+    assert "cpt sessions label" in err and "--log PATH" in err
+    assert "Errno" not in err

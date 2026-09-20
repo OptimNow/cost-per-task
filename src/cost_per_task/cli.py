@@ -479,6 +479,8 @@ def _cmd_label(args: argparse.Namespace) -> int:
 
     task_id, attempt_id = args.task, args.attempt
     if task_id is None or attempt_id is None:
+        if _no_log_yet(args.log, "cpt label"):
+            return 1
         try:
             records = read_jsonl(args.log)
         except OSError as exc:
@@ -505,7 +507,25 @@ def _load_table(paths: list[str], args: argparse.Namespace) -> PricingTable:
     return table
 
 
+def _no_log_yet(log: str, command: str) -> bool:
+    """True, after saying what to do, when the usage log does not exist. A first run in a
+    new folder is the usual cause, and the operating system's own message (Errno 2) says
+    nothing about how a log comes to be."""
+    if Path(log).exists():
+        return False
+    print(
+        f"{command}: there is no usage log yet: {log} does not exist in this folder.\n"
+        "  A log appears as soon as one session gets an outcome (cpt sessions label, or\n"
+        "  cpt sessions import once the sheet or the page holds a pass or a fail), or when an\n"
+        "  agent runs through cpt run. To read a log kept elsewhere, pass --log PATH.",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _analysis(args: argparse.Namespace, *, by_task_type: bool):
+    if _no_log_yet(args.log, "cpt"):
+        return None
     try:
         return load_analysis(
             log=args.log,
@@ -571,6 +591,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
+    if _no_log_yet(args.log, "cpt explain"):
+        return 1
     try:
         records = read_jsonl(args.log)
         table = _load_table(args.prices or default_table_paths(), args)
@@ -984,10 +1006,17 @@ def _cmd_sessions_label(args: argparse.Namespace) -> int:
             print(f"cpt sessions: warning: {problem}", file=sys.stderr)
 
     done = counts["pass"] + counts["fail"]
-    print(
-        f"cpt sessions: labelled {done} of {len(todo)} sessions (pass {counts['pass']}, fail {counts['fail']}, "
-        f"leaked {counts['leaked']}); {counts['calls']} model calls added to {log}, labels in {labels_path}"
-    )
+    if done:
+        print(
+            f"cpt sessions: labelled {done} of {len(todo)} sessions (pass {counts['pass']}, "
+            f"fail {counts['fail']}, leaked {counts['leaked']}); {counts['calls']} model calls added to "
+            f"{log}, labels in {labels_path}"
+        )
+    else:
+        print(
+            f"cpt sessions: labelled 0 of {len(todo)} sessions, so nothing was written. "
+            "cpt report and cpt tasks need at least one pass or fail (p or f)."
+        )
     _print_session_warnings(stats)
     if done:
         _print_report_hint(sessions, imported_tasks, log, labels_path)
