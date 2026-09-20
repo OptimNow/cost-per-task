@@ -126,6 +126,58 @@ def build_attempts(
 
 
 @dataclass
+class TaskSummary:
+    """One task across all its attempts, whatever the model: what it cost and whether it
+    got solved. ``cost_to_first_pass`` adds up the attempts in time order up to and
+    including the first pass; None while no attempt has passed."""
+
+    task_id: str
+    attempts: int
+    passes: int
+    fails: int
+    leaks: int
+    open: int  # attempts without an outcome yet
+    cost: float
+    cost_to_first_pass: float | None
+    source: str  # manual, or the signal the task id was inferred from
+    first_timestamp: str
+    last_timestamp: str
+
+
+def summarise_tasks(attempts: list[Attempt]) -> list[TaskSummary]:
+    """Most expensive task first, then by id."""
+    by_task: dict[str, list[Attempt]] = defaultdict(list)
+    for attempt in attempts:
+        by_task[attempt.task_id].append(attempt)
+    tasks = []
+    for task_id, members in by_task.items():
+        members.sort(key=lambda a: (a.first_timestamp, a.attempt_id))
+        to_first_pass, running = None, 0.0
+        for attempt in members:
+            running += attempt.cost
+            if attempt.passed:
+                to_first_pass = running
+                break
+        tasks.append(
+            TaskSummary(
+                task_id=task_id,
+                attempts=len(members),
+                passes=sum(1 for a in members if a.outcome == "pass"),
+                fails=sum(1 for a in members if a.outcome == "fail"),
+                leaks=sum(1 for a in members if a.leaked),
+                open=sum(1 for a in members if a.outcome is None),
+                cost=sum(a.cost for a in members),
+                cost_to_first_pass=to_first_pass,
+                source=members[0].task_source,
+                first_timestamp=members[0].first_timestamp,
+                last_timestamp=members[-1].first_timestamp,
+            )
+        )
+    tasks.sort(key=lambda t: (-t.cost, t.task_id))
+    return tasks
+
+
+@dataclass
 class GroupSummary:
     model: str
     task_type: str | None

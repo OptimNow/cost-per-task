@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from ..labels import Label
+from ..labels import Label, normalise_outcome
 from ..pricing import PricingTable, describe_usage, price_step, prices_line
 from ..schema import StepRecord
 from ..taskid import DEFAULT_BRANCHES, MANUAL, project_name, source_of, suggest_task
@@ -64,11 +64,15 @@ _STANDARD_TIERS = (None, "standard")
 # Older transcripts (March to May 2026) write an empty string here.
 _STANDARD_GEO = (None, "", "not_available", "global")
 
+# What to read sits left of what to fill in; ids and other reference columns go last.
 SHEET_COLUMNS = [
-    "session_id", "product", "started", "ended", "project", "branch", "title", "main_model",
-    "models", "calls", "api_cost_usd", "task", "task_source", "task_type", "outcome", "leaked",
-    "note",
+    "status", "started", "minutes", "project", "branch", "title", "calls", "api_cost_usd",
+    "main_model", "task", "task_source", "task_type", "outcome", "leaked", "note",
+    "product", "ended", "models", "session_id",
 ]
+# new: first time in the sheet; open: seen before, still without an outcome; labelled:
+# has an outcome, not in the log yet; imported: in the log; gone: its transcript was deleted.
+STATUS_ORDER = {"new": 0, "open": 1, "labelled": 2, "imported": 3, "gone": 4}
 USER_COLUMNS = ("task", "task_type", "outcome", "leaked", "note")
 _YES = {"yes", "y", "true", "1", "x", "oui", "o", "igen", "i"}
 _NO = {"", "no", "n", "false", "0", "non", "nem"}
@@ -152,6 +156,14 @@ class Session:
     def ended(self) -> str:
         stamps = [c.timestamp for c in self.calls.values() if c.timestamp]
         return max(stamps) if stamps else ""
+
+    @property
+    def minutes(self) -> int:
+        """From the first model call to the last, in whole minutes."""
+        if not self.started or not self.ended:
+            return 0
+        span = datetime.fromisoformat(self.ended) - datetime.fromisoformat(self.started)
+        return int(span.total_seconds() // 60)
 
     @property
     def branch(self) -> str:
@@ -410,6 +422,23 @@ def _cell_in(value: str) -> str:
     return value[1:] if value.startswith("'") and value[1:].startswith(_FORMULA_START) else value
 
 
+def has_user_input(row: dict) -> bool:
+    """True when a sheet row carries something a person typed: any of their columns, or a
+    task that is not the suggested one (sheets from before ``task_source`` count as typed)."""
+    if any(row.get(c) for c in USER_COLUMNS if c != "task"):
+        return True
+    return bool(row.get("task")) and row.get("task_source", MANUAL) in (MANUAL, "")
+
+
+def select_new(sessions: dict[str, Session], imported: set[str]) -> tuple[dict[str, Session], str]:
+    """The sessions to look at since the last time: not in the log, and still active after
+    the last session that is. Returns them with that moment (UTC ISO, '' when the log holds
+    no session yet, in which case every session is new)."""
+    cutoff = max((s.ended for sid, s in sessions.items() if sid in imported), default="")
+    fresh = {sid: s for sid, s in sessions.items() if sid not in imported and s.ended > cutoff}
+    return fresh, cutoff
+
+
 def write_sheet(
     path: str | Path,
     sessions: dict[str, Session],
@@ -417,12 +446,14 @@ def write_sheet(
     table: PricingTable | None = None,
     existing: dict[str, dict] | None = None,
     infer: bool = True,
+    imported: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[int, int]:
-    """Write the labelling sheet, newest session first. Rows already in an
-    existing sheet keep what the user typed, including rows for sessions whose
-    transcripts are gone. With ``infer``, an empty task cell gets the suggested
-    task id and ``task_source`` says where it came from; the outcome is never
-    suggested. Returns (rows written, rows carrying user input)."""
+    """Write the labelling sheet: what is left to do first (``status`` new, then open),
+    newest session first within each status. Rows already in an existing sheet keep what
+    the user typed, including rows for sessions whose transcripts are gone. With
+    ``infer``, an empty task cell gets the suggested task id and ``task_source`` says
+    where it came from; the outcome is never suggested. ``imported`` holds the session
+    ids already in the log. Returns (rows written, rows carrying user input)."""
     existing = existing or {}
     rows: list[dict] = []
     for session in sorted(sessions.values(), key=lambda s: s.started, reverse=True):
@@ -435,6 +466,7 @@ def write_sheet(
             "product": session.product,
             "started": _local(session.started),
             "ended": _local(session.ended),
+            "minutes": str(session.minutes),
             "project": session.project,
             "branch": session.branch if infer else "",  # only read to suggest a task
             "title": session.title,
@@ -450,23 +482,27 @@ def write_sheet(
         if infer and not row["task"] and suggestion:
             row["task"] = suggestion[0]
         row["task_source"] = source_of(row["task"], suggestion) if row["task"] else ""
+        if session.session_id in imported:
+            row["status"] = "imported"
+        elif row["outcome"]:
+            row["status"] = "labelled"
+        else:
+            row["status"] = "open" if previous else "new"
         rows.append(row)
     seen = {r["session_id"] for r in rows}
-    rows.extend(
-        {c: old.get(c, "") for c in SHEET_COLUMNS} for sid, old in existing.items() if sid not in seen
-    )
+    for sid, old in existing.items():
+        if sid not in seen:
+            row = {c: old.get(c, "") for c in SHEET_COLUMNS}
+            row["status"] = "imported" if sid in imported else "gone"
+            rows.append(row)
+    # Stable sort: the newest-first order above holds within each status.
+    rows.sort(key=lambda r: STATUS_ORDER.get(r["status"], 9))
     with open(path, "w", encoding="utf-8-sig", newline="") as handle:
         handle.write("sep=,\r\n")  # tells Excel the delimiter whatever the regional settings
         writer = csv.DictWriter(handle, fieldnames=SHEET_COLUMNS, lineterminator="\r\n")
         writer.writeheader()
         writer.writerows({k: _cell_out(v) for k, v in row.items()} for row in rows)
-    labelled = sum(
-        1
-        for r in rows
-        if any(r.get(c) for c in USER_COLUMNS if c != "task")
-        or (r.get("task") and r.get("task_source") == MANUAL)
-    )
-    return len(rows), labelled
+    return len(rows), sum(1 for r in rows if has_user_input(r))
 
 
 def read_sheet(path: str | Path) -> list[dict]:
@@ -526,24 +562,30 @@ def import_sheet(
     existing_labels = existing_labels or {}
     result = SheetImport()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for row in rows:
+    # Row numbers as Excel shows them: the header is row 1, the sep= line is not displayed.
+    for number, row in enumerate(rows, start=2):
         sid, task = row.get("session_id", ""), row.get("task", "")
         if not sid:
             continue
         if not task:
             result.blank += 1
             continue
-        outcome = row.get("outcome", "").lower()
-        if outcome not in ("", "pass", "fail"):
-            result.problems.append(f"{sid}: outcome '{row.get('outcome')}' is not pass or fail; not labelled")
+        where = f"row {number} ({sid[:14]})"
+        outcome = normalise_outcome(row.get("outcome"))
+        if outcome is None:
+            result.problems.append(
+                f"{where}: outcome '{row.get('outcome')}' is not pass or fail (ok, ko, oui and non "
+                "are understood too); not labelled"
+            )
             outcome = ""
         leaked_text = row.get("leaked", "").lower()
         leaked = leaked_text in _YES
         if not leaked and leaked_text not in _NO:
-            result.problems.append(f"{sid}: leaked '{row.get('leaked')}' is not yes or no; read as no")
+            result.problems.append(f"{where}: leaked '{row.get('leaked')}' is not yes or no; read as no")
         if leaked and outcome != "pass":
             result.problems.append(
-                f"{sid}: a leak is an accepted pass that was wrong; leak ignored on '{outcome or 'unlabelled'}'"
+                f"{where}: a leak is an accepted pass that was wrong; leak ignored on "
+                f"'{outcome or 'unlabelled'}'"
             )
             leaked = False
 
@@ -558,7 +600,7 @@ def import_sheet(
             task_for_label = imported_tasks[sid]
             if task_for_label != task:
                 result.problems.append(
-                    f"{sid}: already imported under task '{task_for_label}'; the new task name is ignored"
+                    f"{where}: already imported under task '{task_for_label}'; the new task name is ignored"
                 )
         else:
             if session is None:

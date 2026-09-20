@@ -11,7 +11,7 @@ import json
 from collections.abc import Iterable
 from datetime import datetime
 
-from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost
+from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost, summarise_tasks
 from .pricing import PricingTable, prices_line
 
 
@@ -47,6 +47,7 @@ def render_json(
         "harness": harness,
         "attempts": len(attempts),
         "groups": [summary_to_dict(s) for s in summaries],
+        "tasks": [dataclasses.asdict(t) for t in summarise_tasks(attempts)],
     }
     if comparison is not None:
         a, b = comparison
@@ -96,6 +97,43 @@ def _attempt_table(attempts: list[Attempt], currency: str) -> list[str]:
             f"{(a.task_type or '-')[:10]:<10} {a.steps:>5} {a.cost:>10.4f} {outcome:<9}"
         )
     return lines
+
+
+def _task_table(attempts: list[Attempt], currency: str) -> list[str]:
+    """One row per task, most expensive first: did it get solved, and what did that take."""
+    tasks = summarise_tasks(attempts)
+    width = min(max([12] + [len(t.task_id) for t in tasks]), 36)
+    header = (
+        f"{'task':<{width}} {'attempts':>8} {'pass':>5} {'fail':>5} {'leak':>5} {'open':>5} "
+        f"{'cost ' + currency:>12} {'to first pass':>14}  source"
+    )
+    lines = ["tasks, most expensive first", header, "-" * len(header)]
+    for t in tasks:
+        first = "-" if t.cost_to_first_pass is None else f"{t.cost_to_first_pass:.4f}"
+        lines.append(
+            f"{_tail(t.task_id, width):<{width}} {t.attempts:>8} {t.passes:>5} {t.fails:>5} {t.leaks:>5} "
+            f"{t.open:>5} {t.cost:>12.4f} {first:>14}  {t.source}"
+        )
+    solved = sum(1 for t in tasks if t.passes)
+    lines.append(
+        f"{len(tasks)} tasks: {solved} solved, {sum(1 for t in tasks if not t.passes and not t.open)} "
+        f"failed so far, {sum(1 for t in tasks if not t.passes and t.open)} waiting for an outcome"
+    )
+    return lines
+
+
+def render_tasks(attempts: list[Attempt], table: PricingTable) -> str:
+    """The task table on its own, for ``cpt tasks``."""
+    if not attempts:
+        return "no records in log"
+    lines = [f"prices: {prices_line(table)} ({table.currency})", ""]
+    lines.extend(_task_table(attempts, table.currency))
+    if table.usage is not None and table.usage.predating:
+        lines.append(
+            f"warning: {table.usage.predating} calls are older than the first price snapshot "
+            "of their model and are priced with it"
+        )
+    return "\n".join(lines)
 
 
 def _reconciliation(s: GroupSummary, currency: str) -> str:
@@ -273,6 +311,8 @@ def render_report(
         return "no records in log"
     lines: list[str] = [f"prices: {table.as_of} ({table.currency})", ""]
     lines.extend(_attempt_table(attempts, table.currency))
+    lines.append("")
+    lines.extend(_task_table(attempts, table.currency))
     lines.append("")
     for summary in summaries:
         lines.extend(_group_section(summary, table.currency))

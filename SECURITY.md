@@ -2,8 +2,8 @@
 
 cost-per-task is a command-line tool that runs on the machine of the person measuring. There
 is no server behind it, no account, no telemetry and no update check. It has no runtime
-dependency: everything it executes is the Python standard library plus its own code, under
-5,000 lines in 22 files, which a reviewer can read in an afternoon. The one exception is
+dependency: everything it executes is the Python standard library plus its own code, a
+little over 5,000 lines in 23 files, which a reviewer can read in an afternoon. The one exception is
 opt-in: the `[mcp]` extra installs the MCP SDK and that SDK's own dependencies. Without it,
 `cpt mcp` is unavailable and everything else works.
 
@@ -20,7 +20,7 @@ protect against, and how each statement can be checked. Facts were verified on 2
 | API keys and every other request header | in memory while a request is forwarded | never written |
 | Prompts, completions, tool inputs, file contents | in memory while a request is forwarded, or while a transcript line is parsed | never written |
 | Request URLs | the path, to route the request | never in the log; console messages print the path without its query string |
-| Claude Code and Cowork session titles, names of files a Cowork session produced | yes, unless `--no-titles` | the labelling sheet only (`sessions.csv`), never the log |
+| Claude Code and Cowork session titles, names of files a Cowork session produced | yes, unless `--no-titles` | the labelling sheet (`sessions.csv`), or the screen of `cpt sessions label`, which writes no sheet; never the log |
 | Git branch and pull request number of a session | yes, unless `--no-infer` | the sheet; the log only inside a task id you chose to import |
 
 Two points deserve attention before a log is shared outside the team. Tool names include
@@ -86,7 +86,7 @@ rewritten in the log: outcomes go to the labels file.
   a task id.
 - The Claude Code and Cowork transcript format is internal to Anthropic's products. Lines the
   tool cannot read are skipped and counted, never guessed.
-- The project is at alpha stage and has one maintainer (see below).
+- The project is at alpha stage and has one maintainer.
 
 ## Settings for a sensitive environment
 
@@ -105,9 +105,8 @@ rewritten in the log: outcomes go to the labels file.
 
 - Changes reach `main` through pull requests. A ruleset on the default branch blocks
   deletion and force pushes and requires six CI checks: the full test suite on Ubuntu and
-  Windows, each on Python 3.11, 3.12 and 3.13. The project has one maintainer, so the
-  review rule is met through the administrator bypass once the checks pass; teams that need
-  a second pair of eyes should review the diff between two tags, which is small.
+  Windows, each on Python 3.11, 3.12 and 3.13. Teams that want a second pair of eyes can
+  review the diff between two tags, which is small.
 - Releases are built by `publish-pypi.yml` from a tag: it tests the tagged commit, builds in
   a job that holds no publishing credential, and publishes through PyPI trusted publishing
   (short-lived OIDC identity, no stored token). Every GitHub Action in both workflows is
@@ -142,6 +141,7 @@ measuring sessions needs no connection.
 
 ## Reporting a vulnerability
 
-Write to jean@optimnow.io with the details and, if you can, a way to reproduce. Please do
-not open a public issue for a vulnerability. Fixes ship in a new release; only the latest
-release is supported.
+Use "Report a vulnerability" under the repository's Security tab on GitHub, which opens a
+private report, or write to jean@optimnow.io. Give the details and, if you can, a way to
+reproduce. Please do not open a public issue for a vulnerability. Fixes ship in a new
+release; only the latest release is supported.

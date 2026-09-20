@@ -113,8 +113,8 @@ def test_unchanged_rates_keep_their_earliest_date(tmp_path):
             "history": [_snapshot("2026-08-01", test_model=2.0)]}
     table = _load(tmp_path, data)
     usage = describe_usage([_call("2026-08-15")], table)
-    assert usage.predating == 0
-    assert usage.snapshots == {"2026-08-01": 1}
+    assert usage.predating == 0  # known from 2026-08-01
+    assert usage.snapshots == {"2026-09-10": 1}  # and shown with the day they were last confirmed
 
 
 def test_pinning_prices_every_call_at_one_day(tmp_path):

@@ -7,6 +7,18 @@ versioning, with the minor digit bumped for any user-visible feature.
 ## [Unreleased]
 
 ### Added
+- `cpt sessions label`: label sessions one by one in the terminal, with no spreadsheet. Each
+  session shows its project, start, duration, calls, cost, suggested task, branch and title;
+  one letter answers (pass, fail, leak, skip, rename the task, same task as the previous one,
+  task type, note, quit) and each answer is saved at once through the same code as the sheet
+  import. Titles are shown on screen only.
+- `--new` on `cpt sessions list` and `cpt sessions label`: only the sessions since last time
+  (not in the log, and still active after the last session that is). Every run says how many
+  there are. `--min-calls N` leaves tiny sessions out.
+- A table of tasks in `cpt report`, on its own as `cpt tasks`, and under `tasks` in the JSON
+  output: attempts, passes, fails, leaks, open attempts, cost and cost to the first pass,
+  most expensive task first. The MCP tools still return aggregates only.
+- The labelling sheet gains `status` (new, open, labelled, imported, gone) and `minutes`.
 - Task ids inferred from the environment, so labelling is one column instead of two.
   `cpt sessions list` pre-fills `task` from the issue number in the branch name, else the pull
   request, else the branch, else the session on its own (project, day and the start of its
@@ -33,6 +45,12 @@ versioning, with the minor digit bumped for any user-visible feature.
   as history, restored from the repository. No rate differs between them.
 
 ### Changed
+- The labelling sheet is ordered by what is left to do (status, then newest first) and its
+  columns are regrouped: what identifies a session, then what you fill in, then ids and
+  other reference columns. Sheets written by earlier versions still import.
+- Outcomes typed as `ok`, `yes`, `oui`, `passed`, `ko`, `no`, `non` or `failed` are understood,
+  in the sheet and in `cpt label --import`; a word that is neither is reported with its row
+  number. `cpt label --import` checks every row before writing the first one.
 - The report's attempt table widens its task column up to 36 characters and shortens a longer
   id from the left, so `project/issue-142` stays readable.
 - `cpt sessions import` leaves out a session whose task is still the suggested one and that

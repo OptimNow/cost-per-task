@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -50,9 +50,9 @@ _REQUIRED_RATES = (
 
 @dataclass(frozen=True)
 class DatedRates:
-    """One model's rates in one snapshot. ``effective`` is the day the rates
-    apply from (the snapshot's ``effective_from``, else its ``as_of``);
-    ``as_of`` is the day they were read."""
+    """One model's rates over a stretch of time. ``effective`` is the day the
+    rates apply from (the first snapshot's ``effective_from``, else its
+    ``as_of``); ``as_of`` is the day they were last read and found unchanged."""
 
     effective: str
     as_of: str
@@ -89,11 +89,13 @@ def _parse_models(raw: dict) -> dict[str, ModelRates]:
 
 
 def _compact(entries: list[DatedRates], model: str) -> list[DatedRates]:
-    """Oldest first. A snapshot that repeats the previous rates adds nothing,
-    so the earlier date stands; two rates for one day cannot both be right."""
+    """Oldest first. A snapshot that repeats the previous rates confirms them:
+    the earlier start stands and the later reading becomes their ``as_of``, the
+    date a disclosure should show. Two rates for one day cannot both be right."""
     kept: list[DatedRates] = []
     for entry in sorted(entries, key=lambda e: (e.effective, e.as_of)):
         if kept and kept[-1].rates == entry.rates:
+            kept[-1] = replace(kept[-1], as_of=max(kept[-1].as_of, entry.as_of))
             continue
         if kept and kept[-1].effective == entry.effective:
             raise PricingError(f"model '{model}' has two different prices for {entry.effective}")
