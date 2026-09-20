@@ -286,9 +286,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.rfile.readline()
         return b"".join(chunks)
 
+    def _safe_path(self) -> str:
+        # Some gateways take the key in the query string (``?api_key=``), and
+        # stderr is often redirected to a file: print the bare path only.
+        return self.path.split("?", 1)[0]
+
     def _note_upstream_error(self, status: int) -> None:
         print(
-            f"cpt: upstream returned HTTP {status} for {self.command} {self.path}; "
+            f"cpt: upstream returned HTTP {status} for {self.command} {self._safe_path()}; "
             "not logged",
             file=sys.stderr,
         )
@@ -362,7 +367,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._log(provider_name, usage, latency_ms)
         else:
             print(
-                f"cpt: stream for {self.command} {self.path} ended without a usage "
+                f"cpt: stream for {self.command} {self._safe_path()} ended without a usage "
                 "block; not logged",
                 file=sys.stderr,
             )

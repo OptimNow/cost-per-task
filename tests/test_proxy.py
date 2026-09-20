@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 from email.message import Message
 
@@ -205,6 +206,51 @@ def test_openai_stream_without_injection_logs_nothing(fake_openai_upstream, tmp_
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_console_messages_drop_the_query_string(
+    fake_openai_upstream, fake_openrouter_upstream, tmp_path, capsys
+):
+    """Some gateways take the key as ``?api_key=``; the proxy's two console
+    messages must print the bare path, since stderr often lands in a file."""
+    path = "/v1/chat/completions?api_key=QUERY-STRING-SECRET"
+    payload = {"model": "gpt-5.5", "stream": True, "messages": []}
+
+    # A stream without a usage block.
+    server = create_proxy(
+        upstreams={"openai": fake_openai_upstream},
+        log_path=tmp_path / "a.jsonl",
+        task_id="T1",
+        attempt_id="a1",
+        inject_usage=False,
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        _post(f"http://127.0.0.1:{server.server_address[1]}", path, payload, OPENAI_HEADERS)
+        time.sleep(0.2)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    # An upstream error: the OpenRouter fake answers 404 outside /api/v1.
+    server, proxy_url = _start_proxy(tmp_path / "b.jsonl", openai=fake_openrouter_upstream)
+    try:
+        try:
+            _post(proxy_url, path, payload, OPENAI_HEADERS)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+        time.sleep(0.2)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    captured = capsys.readouterr()
+    assert "ended without a usage block" in captured.err
+    assert "upstream returned HTTP 404" in captured.err
+    assert "/v1/chat/completions" in captured.err
+    for text in (captured.err, captured.out):
+        assert "QUERY-STRING-SECRET" not in text
+        assert "api_key" not in text
 
 
 def test_openai_responses_api_json_and_stream(fake_openai_upstream, tmp_path):

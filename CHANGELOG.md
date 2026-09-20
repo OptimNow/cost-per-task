@@ -6,6 +6,11 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Security
+- The proxy's two console messages (upstream error, stream without a usage block) print the
+  request path without its query string. A gateway that takes the key as `?api_key=` could
+  otherwise leave it in a redirected stderr. The usage log never held URLs and is unchanged.
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
