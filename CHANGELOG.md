@@ -6,6 +6,12 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-20
+
+Answers the feedback of the measurement framework's author (task labelling, dated prices,
+log scrub), adds a security and privacy statement for users in regulated settings, and makes
+labelling a weekly habit: in the terminal, in a spreadsheet or in a browser page.
+
 ### Added
 - `cpt sessions label`: label sessions one by one in the terminal, with no spreadsheet. Each
   session shows its project, start, duration, calls, cost, suggested task, branch and title;
@@ -20,9 +26,9 @@ versioning, with the minor digit bumped for any user-visible feature.
   to nothing (Content-Security-Policy `default-src 'none'`, script and style allowed by
   hash only), stores nothing in the browser, puts transcript text in the page as text only,
   and gives exported cells the same formula guard as the sheet.
-- `--new` on `cpt sessions list`, `cpt sessions page` and `cpt sessions label`: only the sessions since last time
-  (not in the log, and still active after the last session that is). Every run says how many
-  there are. `--min-calls N` leaves tiny sessions out.
+- `--new` on `cpt sessions list`, `cpt sessions page` and `cpt sessions label`: only the
+  sessions since last time (not in the log, and still active after the last session that is).
+  Every run says how many there are. `--min-calls N` leaves tiny sessions out.
 - A table of tasks in `cpt report`, on its own as `cpt tasks`, and under `tasks` in the JSON
   output: attempts, passes, fails, leaks, open attempts, cost and cost to the first pass,
   most expensive task first. The MCP tools still return aggregates only.

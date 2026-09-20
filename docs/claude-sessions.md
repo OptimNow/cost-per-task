@@ -38,7 +38,7 @@ follow the same application conventions but have not been checked on a Mac yet.
 
 ## Before you start
 
-Install cost-per-task once, version 0.5.0 or later:
+Install cost-per-task once, version 0.7.0 or later (`cpt --version` tells):
 
 ```
 python -m pip install cost-per-task
