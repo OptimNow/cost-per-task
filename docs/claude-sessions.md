@@ -70,6 +70,8 @@ command. Under each one, what you should see.
    `wrote sessions.csv: N rows`. One row per session: what is left to do first, newest
    first. Prefer the terminal to a spreadsheet? Skip steps 2 to 4 and run
    `cpt sessions label` instead: see [Labelling in the terminal](#labelling-in-the-terminal).
+   Prefer clicking? `cpt sessions page` writes the same sheet as a page for your browser:
+   see [Labelling in a browser page](#labelling-in-a-browser-page).
 
 3. **Label in Excel.** Open `sessions.csv`. The `task` column is already filled in from
    the issue number, pull request or git branch of each session; correct any that is
@@ -242,6 +244,45 @@ code as the sheet import, so the two ways can be mixed. Titles are shown on scre
 jog your memory and are written nowhere; `--no-titles` hides them. The options
 `--since`, `--new`, `--min-calls`, `--no-infer`, `--source` and `--path` work as they do
 for `cpt sessions list`. The command ends by printing the report command.
+
+## Labelling in a browser page
+
+```
+python -m cost_per_task.cli sessions page --new
+```
+
+This writes `sessions.html`, one file that you open by double-clicking it. It shows the
+same rows as the sheet, with a drop-down list for the outcome, a tick box for a leak,
+task names and task types that complete as you type, and:
+
+- **filters**: a search box over project, branch, title, task and note, and lists for
+  status, project, product and outcome (`without an outcome` is the to-do list);
+- **sorting**: click a column heading, click again to reverse;
+- **changes in bulk**: tick rows (the box in the heading ticks every row shown), then
+  apply one task name or one outcome to all of them. That is the quick way to give two
+  sessions the same task when the second was a retry of the first.
+
+When you are done, press **Save sessions.csv**. Chrome and Edge ask where to save: choose
+the folder of your log. Other browsers put the file in your downloads folder. Then:
+
+```
+python -m cost_per_task.cli sessions import            # sessions.csv in the current folder
+python -m cost_per_task.cli sessions import PATH\sessions.csv
+```
+
+The file it saves is the labelling sheet, so the page, Excel and `cpt sessions list` can
+be mixed: the page starts from what `sessions.csv` already holds (`--sheet` names another
+file). The options of `cpt sessions list` apply: `--since`, `--new`, `--min-calls`,
+`--no-titles`, `--no-infer`, `--source`, `--path`, and `--out` for the name of the page.
+
+**What the page can and cannot do.** There is no server: the page is a file. It loads
+nothing from the network, not even a font, and it cannot connect to anything: its content
+security policy forbids every connection and lets only the tool's own script run,
+identified by its hash, so text hidden in a session title can neither run nor send
+anything. It stores nothing in the browser: what you enter lives in the tab until you
+save, and the page warns you before you close it with unsaved changes. It does hold your
+session titles and branch names, like the sheet: treat `sessions.html` as private and
+delete it when you are done.
 
 ## Step 3: import and read the report
 

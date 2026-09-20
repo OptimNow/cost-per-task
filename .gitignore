@@ -13,6 +13,7 @@ level1-labels.jsonl
 level2-log.jsonl
 level2-labels.jsonl
 sessions*.csv
+sessions*.html
 sessions-log.jsonl
 sessions-labels.jsonl
 # Never needed by this project; listed so that a stray one is not committed.

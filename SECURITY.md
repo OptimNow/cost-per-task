@@ -2,8 +2,8 @@
 
 cost-per-task is a command-line tool that runs on the machine of the person measuring. There
 is no server behind it, no account, no telemetry and no update check. It has no runtime
-dependency: everything it executes is the Python standard library plus its own code, a
-little over 5,000 lines in 23 files, which a reviewer can read in an afternoon. The one exception is
+dependency: everything it executes is the Python standard library plus its own code, under
+6,000 lines in 24 files, which a reviewer can read in an afternoon. The one exception is
 opt-in: the `[mcp]` extra installs the MCP SDK and that SDK's own dependencies. Without it,
 `cpt mcp` is unavailable and everything else works.
 
@@ -20,7 +20,7 @@ protect against, and how each statement can be checked. Facts were verified on 2
 | API keys and every other request header | in memory while a request is forwarded | never written |
 | Prompts, completions, tool inputs, file contents | in memory while a request is forwarded, or while a transcript line is parsed | never written |
 | Request URLs | the path, to route the request | never in the log; console messages print the path without its query string |
-| Claude Code and Cowork session titles, names of files a Cowork session produced | yes, unless `--no-titles` | the labelling sheet (`sessions.csv`), or the screen of `cpt sessions label`, which writes no sheet; never the log |
+| Claude Code and Cowork session titles, names of files a Cowork session produced | yes, unless `--no-titles` | the labelling sheet (`sessions.csv`), the labelling page (`sessions.html`), or the screen of `cpt sessions label`, which writes neither; never the log |
 | Git branch and pull request number of a session | yes, unless `--no-infer` | the sheet; the log only inside a task id you chose to import |
 
 Two points deserve attention before a log is shared outside the team. Tool names include
@@ -53,6 +53,15 @@ Two connections exist in the code, and no other:
 Measuring Claude Code and Cowork sessions (`cpt sessions ...`) makes no connection at all:
 the transcripts are read from disk and the results are written to disk.
 
+That holds for the labelling page too. `cpt sessions page` starts no server: it writes one
+HTML file, opened from disk. The file refers to nothing outside itself, and its
+Content-Security-Policy is `default-src 'none'`, with the tool's own script and style
+allowed by SHA-256 hash and nothing else: the browser refuses every request the page could
+make and every script that is not that one, so text planted in a session title can
+neither run nor send anything. Transcript text enters the page as text, never as markup.
+The page keeps nothing in the browser (no cookie, no local storage); saving is a save
+dialog or a download of the labelling sheet.
+
 The proxy listens on `127.0.0.1` only, and the command line offers no way to change that.
 It does not authenticate its callers: another process on the same machine can send requests
 through it with its own API key, and that usage lands in your log. It cannot obtain your key
@@ -67,9 +76,10 @@ task or attempt ids.
 | `cpt-log.jsonl` | usage metadata, task ids, tool names | internal; review before sharing |
 | `cpt-labels.jsonl` | outcomes and your notes | internal; review before sharing |
 | `sessions.csv` | the above per session, plus titles and branch names | private |
+| `sessions.html` | the same rows as the sheet, as a page for the browser (`cpt sessions page`) | private; delete it when done |
 | `prices/*.json` | public list prices with dates and sources | public |
 
-The first three are listed in the repository's `.gitignore`. Cells of `sessions.csv` that
+The first four are listed in the repository's `.gitignore`. Cells of `sessions.csv` that
 start with `=`, `+`, `-` or `@` are written behind an apostrophe, so that a session title
 cannot run as a formula when the sheet is opened in Excel. Nothing is ever deleted or
 rewritten in the log: outcomes go to the labels file.
@@ -117,12 +127,16 @@ rewritten in the log: outcomes go to the labels file.
 - The privacy rules above are enforced by tests that fail the build when broken, among them
   `test_no_secrets_or_content_in_log`, `test_console_messages_drop_the_query_string`,
   `test_a_malformed_request_path_gets_a_502_and_no_traceback`,
-  `test_sheet_cells_never_open_as_formulas` and the transcript tests, which plant a secret
+  `test_sheet_cells_never_open_as_formulas`, the page tests in `tests/test_review_page.py`
+  (policy, no URL, no storage, no markup injection) and the transcript tests, which plant a secret
   prompt, answer, tool input and title and check that none reaches the log.
 
 ## Check it yourself
 
 ```
+# the labelling page refers to nothing outside itself and allows no connection
+python -c "from cost_per_task.review_page import content_security_policy as p; print(p())"
+
 # every place the code can open a connection, listen or start a process
 git grep -nE "urlopen|http\.client|http\.server|socket|subprocess|os\.system|eval\(|exec\(" -- src/
 

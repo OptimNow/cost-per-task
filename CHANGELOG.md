@@ -12,7 +12,15 @@ versioning, with the minor digit bumped for any user-visible feature.
   one letter answers (pass, fail, leak, skip, rename the task, same task as the previous one,
   task type, note, quit) and each answer is saved at once through the same code as the sheet
   import. Titles are shown on screen only.
-- `--new` on `cpt sessions list` and `cpt sessions label`: only the sessions since last time
+- `cpt sessions page`: the labelling sheet as one self-contained HTML page for the browser,
+  with a drop-down list per outcome, filters (search, status, project, product, outcome),
+  sorting, completion of task names and types, and bulk changes on the ticked rows. It saves
+  the same `sessions.csv` that `cpt sessions import` reads, and starts from the entries an
+  existing sheet holds. No server and no dependency. The page loads nothing and can connect
+  to nothing (Content-Security-Policy `default-src 'none'`, script and style allowed by
+  hash only), stores nothing in the browser, puts transcript text in the page as text only,
+  and gives exported cells the same formula guard as the sheet.
+- `--new` on `cpt sessions list`, `cpt sessions page` and `cpt sessions label`: only the sessions since last time
   (not in the log, and still active after the last session that is). Every run says how many
   there are. `--min-calls N` leaves tiny sessions out.
 - A table of tasks in `cpt report`, on its own as `cpt tasks`, and under `tasks` in the JSON

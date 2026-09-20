@@ -439,21 +439,20 @@ def select_new(sessions: dict[str, Session], imported: set[str]) -> tuple[dict[s
     return fresh, cutoff
 
 
-def write_sheet(
-    path: str | Path,
+def sheet_rows(
     sessions: dict[str, Session],
     *,
     table: PricingTable | None = None,
     existing: dict[str, dict] | None = None,
     infer: bool = True,
     imported: set[str] | frozenset[str] = frozenset(),
-) -> tuple[int, int]:
-    """Write the labelling sheet: what is left to do first (``status`` new, then open),
-    newest session first within each status. Rows already in an existing sheet keep what
-    the user typed, including rows for sessions whose transcripts are gone. With
-    ``infer``, an empty task cell gets the suggested task id and ``task_source`` says
-    where it came from; the outcome is never suggested. ``imported`` holds the session
-    ids already in the log. Returns (rows written, rows carrying user input)."""
+) -> list[dict]:
+    """The rows of the labelling sheet, shared by the CSV and the browser page: what is
+    left to do first (``status`` new, then open), newest session first within each status.
+    Rows already in an existing sheet keep what the user typed, including rows for
+    sessions whose transcripts are gone. With ``infer``, an empty task cell gets the
+    suggested task id and ``task_source`` says where it came from; the outcome is never
+    suggested. ``imported`` holds the session ids already in the log."""
     existing = existing or {}
     rows: list[dict] = []
     for session in sorted(sessions.values(), key=lambda s: s.started, reverse=True):
@@ -497,6 +496,21 @@ def write_sheet(
             rows.append(row)
     # Stable sort: the newest-first order above holds within each status.
     rows.sort(key=lambda r: STATUS_ORDER.get(r["status"], 9))
+    return rows
+
+
+def write_sheet(
+    path: str | Path,
+    sessions: dict[str, Session],
+    *,
+    table: PricingTable | None = None,
+    existing: dict[str, dict] | None = None,
+    infer: bool = True,
+    imported: set[str] | frozenset[str] = frozenset(),
+) -> tuple[int, int]:
+    """Write ``sheet_rows`` as the CSV that Excel opens in any locale. Returns (rows
+    written, rows carrying user input)."""
+    rows = sheet_rows(sessions, table=table, existing=existing, infer=infer, imported=imported)
     with open(path, "w", encoding="utf-8-sig", newline="") as handle:
         handle.write("sep=,\r\n")  # tells Excel the delimiter whatever the regional settings
         writer = csv.DictWriter(handle, fieldnames=SHEET_COLUMNS, lineterminator="\r\n")

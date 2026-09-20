@@ -54,7 +54,8 @@ The summary shows what your sessions would cost at API prices, by month and by m
 any labelling. `label` shows your sessions one by one with a task name already suggested:
 type `p` for pass or `f` for fail, and next week `cpt sessions label --new` only asks about
 what happened since. Prefer a spreadsheet? `cpt sessions list`, fill the sheet, then
-`cpt sessions import`. Either way ends by printing the report command for you. [Quick path](docs/claude-sessions.md#quick-path), six commands with what you should see, and
+`cpt sessions import`. Prefer clicking? `cpt sessions page` writes the same sheet as one
+offline HTML page with lists and filters. Either way ends by printing the report command for you. [Quick path](docs/claude-sessions.md#quick-path), six commands with what you should see, and
 [guide](docs/claude-sessions.md).
 
 <img src="https://img.shields.io/badge/-Your%20own%20agent-2C2C2C?logo=python&logoColor=white" alt="Your own agent" height="22"/><br>
@@ -250,6 +251,7 @@ labels, report and comparison are model-agnostic already.
 | `cpt sessions summary [--since D] [--by month] [--subscription P]` | what your Claude Code and Cowork sessions would cost at list prices, by product, model and period; no labels needed |
 | `cpt sessions label [--new] [--since D] [--min-calls N]` | label Claude Code and Cowork sessions one by one in the terminal: a task is suggested from the issue, pull request or branch, you type pass or fail. `--new` keeps the sessions since last time |
 | `cpt sessions list [--new]`, then `cpt sessions import` | the same through a spreadsheet: rows sorted by what is left to do, task column pre-filled, `ok` and `ko` understood |
+| `cpt sessions page [--new]`, then `cpt sessions import` | the same in your browser: one self-contained HTML file with drop-down lists, filters, sorting and bulk edits. No server, nothing loaded, no connection possible; it saves the sheet for the import |
 | `cpt tasks [--json]` | one row per task: attempts, passes, fails, leaks, cost and the cost to the first pass |
 | `cpt import langfuse\|litellm FILE` | convert a usage export into cpt records |
 | `cpt report [--cleanup-cost K] [--harness H] [--json]` | the report, per model and task type |
