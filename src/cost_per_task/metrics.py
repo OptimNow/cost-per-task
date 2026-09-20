@@ -165,7 +165,7 @@ class GroupSummary:
     # divides by p. None when nothing is labelled.
     labelled_mean_cost: float | None = None
     # Tasks per origin of their id: 'manual' (stated by a person) or the signal it was
-    # inferred from (issue, pr, branch, date).
+    # inferred from (issue, pr, branch, session).
     task_sources: dict[str, int] = field(default_factory=dict)
 
 

@@ -39,7 +39,7 @@ class StepRecord:
     effort: str | None = None
     task_type: str | None = None
     # How the task id came about: None or 'manual' when a person stated it, else the
-    # signal it was inferred from (issue, pr, branch, date).
+    # signal it was inferred from (issue, pr, branch, session).
     task_source: str | None = None
     reported_cost: float | None = None  # cost the provider itself reported (OpenRouter usage.cost)
     outcome_label: str = "pending"  # pass | fail | pending; the labels file wins at report time

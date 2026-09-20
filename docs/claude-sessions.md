@@ -175,15 +175,16 @@ signal it used, strongest first:
 | `issue` | the issue number that opens the branch name | branch `fix/123-login` gives `shop/issue-123` |
 | `pr` | the pull request the session worked on | `shop/pr-14` |
 | `branch` | the git branch, unless it is `main`, `master` or similar | `shop/docs/quick-path` |
-| `date` | the project and the day, when there is nothing better | `shop/2026-09-10` |
+| `session` | the session on its own, when there is nothing better: project, day and the start of its id | `shop/2026-09-10-1a2b3c4d` |
 | `manual` | what you typed | |
 
 Three rules keep the guess honest. The outcome is never guessed: pass or fail is your
 call. A session whose task is still the suggested one and that has no outcome was never
 looked at, so the import leaves it out (`--include-unlabelled` brings it in, to measure
 cost without a success rate). And the report's disclosure checklist states how many
-tasks were stated by hand and how many were inferred, by signal. The `date` guess is the
-weakest: it treats a project's work on one day as one task, which is often wrong.
+tasks were stated by hand and how many were inferred, by signal. The suggestion never
+merges two sessions on a hunch: a `session` task stands alone until you give two sessions
+the same name, because a false merge would count unrelated work as retries of one task.
 Session titles are never used for the suggestion, since a task id goes to the log.
 
 Two tips. A session that did one job measures best; a session that mixed several

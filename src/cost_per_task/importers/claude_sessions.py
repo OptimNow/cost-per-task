@@ -160,11 +160,14 @@ class Session:
         return max(named)[1] if named else ""
 
     def suggested_task(self) -> tuple[str, str] | None:
+        # Most Cowork sessions work in a folder called 'outputs', which names nothing.
+        project = "cowork" if self.source == "cowork" and self.project in ("", "outputs") else self.project
         return suggest_task(
             branch=self.branch,
             pr_number=self.pr_number,
-            project=self.project,
+            project=project,
             day=_local(self.started)[:10],
+            session=self.session_id.removeprefix("local_"),
         )
 
     def records(

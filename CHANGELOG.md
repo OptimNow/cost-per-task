@@ -9,8 +9,9 @@ versioning, with the minor digit bumped for any user-visible feature.
 ### Added
 - Task ids inferred from the environment, so labelling is one column instead of two.
   `cpt sessions list` pre-fills `task` from the issue number in the branch name, else the pull
-  request, else the branch, else project and day; the new `branch` and `task_source` columns
-  show the signal. `--no-infer` keeps the old empty column. Session titles are never used.
+  request, else the branch, else the session on its own (project, day and the start of its
+  id, so two sessions are never merged on a hunch); the new `branch` and `task_source`
+  columns show the signal. `--no-infer` keeps the old empty column. Session titles are never used.
 - `cpt run` no longer needs `--task-id` inside a git repository: the task comes from the
   branch. `--label-from-exit` labels the attempt pass or fail from the command's exit code,
   for commands that end with their own check.

@@ -2,10 +2,13 @@
 
 Labelling by hand is the bottleneck of a weekly measurement, and an empty task
 column measures nothing. The guess comes from structure only (git branch, pull
-request number, working folder, day), never from prompts, answers or session
-titles. It is always marked as a guess (``task_source``), so a report can say
-how many of its tasks a person stated and how many were inferred. Outcomes are
-never guessed: pass or fail stays a human call.
+request number, working folder, day, session id), never from prompts, answers or
+session titles. It may split one job over two task ids, which a person fixes by
+giving them one name; it never merges two sessions on a hunch, since a false
+merge would pass unrelated work off as retries of one task. It is always marked
+as a guess (``task_source``), so a report can say how many of its tasks a person
+stated and how many were inferred. Outcomes are never guessed: pass or fail
+stays a human call.
 """
 
 from __future__ import annotations
@@ -35,11 +38,13 @@ def suggest_task(
     pr_number: int | str | None = None,
     project: str = "",
     day: str = "",
+    session: str = "",
 ) -> tuple[str, str] | None:
     """(task id, source) from the strongest signal available, or None. Sources
     in order: ``issue`` (number in the branch name), ``pr``, ``branch``, then
-    ``date`` (the project's work on one day counts as one task). The project
-    name prefixes the id so that two repositories never share a task."""
+    ``session`` (the session on its own: project, day and the start of its
+    id). The project name prefixes the id so that two repositories never share
+    a task."""
     prefix = f"{project}/" if project else ""
     branch = (branch or "").strip()
     issue = issue_in_branch(branch)
@@ -49,8 +54,8 @@ def suggest_task(
         return f"{prefix}pr-{pr_number}", "pr"
     if branch not in DEFAULT_BRANCHES:
         return f"{prefix}{branch}", "branch"
-    if project and day:
-        return f"{project}/{day}", "date"
+    if project and day and session:
+        return f"{project}/{day}-{session[:8]}", "session"
     return None
 
 

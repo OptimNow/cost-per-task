@@ -48,7 +48,9 @@ def test_suggestion_takes_the_strongest_signal():
     assert suggest_task(branch="fix/123-login", pr_number=9, project="shop") == ("shop/issue-123", "issue")
     assert suggest_task(branch="docs/quick-path", pr_number=9, project="shop") == ("shop/pr-9", "pr")
     assert suggest_task(branch="docs/quick-path", project="shop") == ("shop/docs/quick-path", "branch")
-    assert suggest_task(branch="main", project="shop", day="2026-09-10") == ("shop/2026-09-10", "date")
+    assert suggest_task(branch="main", project="shop", day="2026-09-10", session="1a2b3c4d-5e6f") == (
+        "shop/2026-09-10-1a2b3c4d", "session")
+    assert suggest_task(branch="main", project="shop", day="2026-09-10") is None  # never a whole day
     assert suggest_task(branch="main") is None
     assert source_of("shop/pr-9", ("shop/pr-9", "pr")) == "pr"
     assert source_of("checkout rewrite", ("shop/pr-9", "pr")) == "manual"
@@ -104,7 +106,7 @@ def test_sheet_is_prefilled_and_keeps_what_the_user_typed(workspace):
     assert (rows["A"]["task"], rows["A"]["task_source"]) == ("shop/issue-123", "issue")
     assert rows["A"]["task"] == rows["B"]["task"]  # two attempts at one task
     assert (rows["C"]["task"], rows["C"]["task_source"], rows["C"]["branch"]) == ("shop/pr-9", "pr", "docs/guide")
-    assert rows["D"]["task_source"] == "date"
+    assert rows["D"]["task_source"] == "session"
     assert all(r["outcome"] == "" for r in rows.values())  # never guessed
 
     # The user renames one task; a refresh keeps it and marks it as theirs.
