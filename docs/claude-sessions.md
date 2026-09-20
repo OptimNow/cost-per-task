@@ -14,6 +14,7 @@ There is no proxy to run, no API key to set and nothing extra to pay.
 | Model, token counts (input, output, cache reads, cache writes), effort, tool names, timestamps | yes | the usage log |
 | Product (desktop, terminal, Cowork) and Claude Code version | yes | the sheet and the disclosure checklist |
 | Name of the folder the session worked in | yes | the sheet |
+| Git branch and pull request number of the session | yes | the sheet, to suggest a task; the log, only as part of a task id you imported (pass `--no-infer` to leave them out) |
 | Session title (desktop) or names of files a Cowork session produced | yes, unless you pass `--no-titles` | the sheet only, never the log |
 | Your prompts, Claude's answers, tool inputs, file contents | never | nowhere |
 
@@ -65,10 +66,12 @@ command. Under each one, what you should see.
    ```
    `wrote sessions.csv: N rows`. One row per session, newest first.
 
-3. **Label in Excel.** Open `sessions.csv`; for the sessions you want to measure, fill
-   `task` (the same name for sessions that attempted the same job), `task_type` (for
-   example `code`, `analysis`, `writing`), `outcome` (`pass` or `fail`) and, if you later
-   found an accepted result wrong, `leaked` (`yes`). Save as CSV and close Excel.
+3. **Label in Excel.** Open `sessions.csv`. The `task` column is already filled in from
+   the issue number, pull request or git branch of each session; correct any that is
+   wrong (the same name for sessions that attempted the same job). For the sessions you
+   want to measure, fill `outcome` (`pass` or `fail`), `task_type` (for example `code`,
+   `analysis`, `writing`) and, if you later found an accepted result wrong, `leaked`
+   (`yes`). Save as CSV and close Excel.
 
 4. **The import.**
    ```
@@ -138,6 +141,7 @@ minute. Useful options:
 | `--since 2026-09-01` | only sessions active on or after that date |
 | `--source code` or `--source cowork` | only Claude Code, or only Cowork |
 | `--no-titles` | leave session titles and Cowork file names out of the sheet |
+| `--no-infer` | leave the `task` column empty instead of suggesting one |
 | `--out other.csv` | write the sheet somewhere else |
 | `--path FOLDER` | read transcripts from this folder instead of the usual places |
 
@@ -145,12 +149,12 @@ Running it again later adds new sessions and keeps everything you typed.
 
 ## Step 2: fill in the sheet
 
-Open `sessions.csv` in Excel. The first ten columns come from the tool; leave them
-as they are. The last five are yours:
+Open `sessions.csv` in Excel. Most columns come from the tool; leave them as they
+are. Five are yours:
 
 | Column | What to write |
 |---|---|
-| `task` | a short name for the job. Give the same name to every session that attempted the same job. Leave it empty to skip a session. |
+| `task` | a short name for the job. Give the same name to every session that attempted the same job. It comes pre-filled (see below); overwrite it whenever you know better. |
 | `task_type` | a category such as `coding`, `writing` or `analysis`, so the report compares like with like |
 | `outcome` | `pass` if you accepted the result, `fail` if you gave up or had to redo it |
 | `leaked` | `yes` if you accepted the result and later found it was wrong |
@@ -158,6 +162,26 @@ as they are. The last five are yours:
 
 Save it as CSV. Excel in any language is fine, including versions that save with
 semicolons or in the older Windows character set.
+
+**The suggested task.** Typing a task for every session does not survive weekly use, so
+the tool suggests one from what the session already knows. `task_source` says which
+signal it used, strongest first:
+
+| `task_source` | The task is | Example |
+|---|---|---|
+| `issue` | the issue number that opens the branch name | branch `fix/123-login` gives `shop/issue-123` |
+| `pr` | the pull request the session worked on | `shop/pr-14` |
+| `branch` | the git branch, unless it is `main`, `master` or similar | `shop/docs/quick-path` |
+| `date` | the project and the day, when there is nothing better | `shop/2026-09-10` |
+| `manual` | what you typed | |
+
+Three rules keep the guess honest. The outcome is never guessed: pass or fail is your
+call. A session whose task is still the suggested one and that has no outcome was never
+looked at, so the import leaves it out (`--include-unlabelled` brings it in, to measure
+cost without a success rate). And the report's disclosure checklist states how many
+tasks were stated by hand and how many were inferred, by signal. The `date` guess is the
+weakest: it treats a project's work on one day as one task, which is often wrong.
+Session titles are never used for the suggestion, since a task id goes to the log.
 
 Two tips. A session that did one job measures best; a session that mixed several
 jobs counts as one attempt at whichever task you name. And label only sessions you
@@ -169,7 +193,7 @@ can judge honestly: an outcome you are unsure of is better left empty.
 python -m cost_per_task.cli sessions import
 ```
 
-This adds the usage of every session you gave a task to `cpt-log.jsonl`, and your
+This adds the usage of every session you gave a task or an outcome to `cpt-log.jsonl`, and your
 outcomes to `cpt-labels.jsonl`, the files every other command reads by default, so the
 report needs no file options:
 

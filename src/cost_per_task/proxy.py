@@ -167,6 +167,7 @@ class ProxyServer(ThreadingHTTPServer):
         task_type: str | None = None,
         inject_usage: bool = True,
         openrouter_usage: bool | None = None,
+        task_source: str | None = None,
     ) -> None:
         super().__init__(address, ProxyHandler)
         unknown = set(upstreams) - set(ADAPTERS)
@@ -182,6 +183,7 @@ class ProxyServer(ThreadingHTTPServer):
         self.task_id = task_id
         self.attempt_id = attempt_id
         self.task_type = task_type
+        self.task_source = task_source
         self.inject_usage = inject_usage
         # OpenRouter usage accounting: auto-detected from the upstream host
         # unless forced, since OpenAI itself rejects the extra parameter.
@@ -391,6 +393,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             latency_ms=latency_ms,
             effort=getattr(self, "_request_effort", None),
             task_type=self.server.task_type,
+            task_source=self.server.task_source,
             reported_cost=usage.reported_cost,
         )
         self.server.writer.append(record)
@@ -406,6 +409,7 @@ def create_proxy(
     task_type: str | None = None,
     inject_usage: bool = True,
     openrouter_usage: bool | None = None,
+    task_source: str | None = None,
     host: str = "127.0.0.1",
     port: int = 0,
 ) -> ProxyServer:
@@ -422,4 +426,5 @@ def create_proxy(
         task_type=task_type,
         inject_usage=inject_usage,
         openrouter_usage=openrouter_usage,
+        task_source=task_source,
     )

@@ -58,6 +58,7 @@ from .pricing import PricingError, PricingTable, default_table_paths, describe_u
 from .proxy import DEFAULT_UPSTREAMS, create_proxy
 from .report import render_comparison, render_explain, render_json, render_report
 from .schema import JsonlWriter, read_jsonl
+from .taskid import current_branch, project_name, suggest_task
 
 DEFAULT_LOG = "cpt-log.jsonl"
 DEFAULT_LABELS = "cpt-labels.jsonl"
@@ -141,8 +142,19 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser(
         "run", help="run a command through the proxy: cpt run --task-id T1 -- <command>"
     )
-    run.add_argument("--task-id", required=True)
+    run.add_argument(
+        "--task-id",
+        help="task id (default: inferred from the git branch: issue number, else branch name)",
+    )
     run.add_argument("--attempt-id")
+    run.add_argument("--labels", default=DEFAULT_LABELS, help="labels file for --label-from-exit")
+    run.add_argument(
+        "--label-from-exit",
+        action="store_true",
+        help="label the attempt from the command's exit code: 0 is pass, anything else fail. "
+        "Only for a command that checks the result itself (a script ending with the tests); "
+        "an agent CLI exits 0 whether or not it solved the task",
+    )
     _add_proxy_options(run)
     run.add_argument("cmd", nargs=argparse.REMAINDER)
 
@@ -218,10 +230,20 @@ def main(argv: list[str] | None = None) -> int:
     s_list.add_argument("--prices", action="append", help="pricing table(s) for the cost column")
     _add_prices_as_of(s_list)
     s_list.add_argument("--no-titles", action="store_true", help="leave session titles out of the sheet")
+    s_list.add_argument(
+        "--no-infer",
+        action="store_true",
+        help="leave the task column empty instead of suggesting one from the branch or pull request",
+    )
     s_import = sessions_sub.add_parser("import", help="import the sessions you gave a task, with labels")
     s_import.add_argument("sheet", nargs="?", default=DEFAULT_SHEET)
     s_import.add_argument("--log", help=f"log to append to (default {DEFAULT_LOG}, as cpt run)")
     s_import.add_argument("--labels", help=f"labels file (default {DEFAULT_LABELS}, as cpt label)")
+    s_import.add_argument(
+        "--include-unlabelled",
+        action="store_true",
+        help="also import sessions whose task is still the suggested one and that have no outcome",
+    )
     s_summary = sessions_sub.add_parser(
         "summary", help="totals by product, model and period at API list prices, no labels needed"
     )
@@ -304,6 +326,19 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if resolved:
         cmd[0] = resolved
 
+    task_source = None
+    if not args.task_id:
+        guess = suggest_task(branch=current_branch(), project=project_name(os.getcwd()))
+        if guess is None:
+            print(
+                "cpt run: no --task-id, and no git branch to infer one from (not a repository, "
+                "or a default branch); pass --task-id T1",
+                file=sys.stderr,
+            )
+            return 2
+        args.task_id, task_source = guess
+        print(f"cpt: task id inferred from the git {task_source}: {args.task_id}")
+
     attempt_id = args.attempt_id or _new_attempt_id()
     server = create_proxy(
         upstreams=_upstreams(args),
@@ -311,6 +346,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         task_id=args.task_id,
         attempt_id=attempt_id,
         task_type=args.task_type,
+        task_source=task_source,
         inject_usage=not args.no_inject_usage,
         port=0,
     )
@@ -326,8 +362,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         f"cpt: task {args.task_id} attempt {attempt_id}; "
         f"proxy on port {port}; logging to {args.log}"
     )
+    code = None
     try:
-        return subprocess.run(cmd, env=env).returncode
+        code = subprocess.run(cmd, env=env).returncode
+        return code
     finally:
         server.shutdown()
         server.server_close()
@@ -335,6 +373,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"cpt: captured {server.captured_count} steps "
             f"(task {args.task_id}, attempt {attempt_id}) in {args.log}"
         )
+        if args.label_from_exit and code is not None and server.captured_count:
+            outcome = "pass" if code == 0 else "fail"
+            append_label(
+                args.labels,
+                Label(task_id=args.task_id, attempt_id=attempt_id, outcome=outcome,
+                      note=f"from exit code {code}"),
+            )
+            print(f"cpt: labelled {outcome} from exit code {code} in {args.labels}")
 
 
 def _latest_attempt(records, task_id: str | None) -> tuple[str, str] | None:
@@ -605,7 +651,9 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
     out = Path(args.out)
     try:
         existing = {r["session_id"]: r for r in read_sheet(out)} if out.exists() else {}
-        written, kept = write_sheet(out, sessions, table=table, existing=existing)
+        written, kept = write_sheet(
+            out, sessions, table=table, existing=existing, infer=not args.no_infer
+        )
     except PermissionError:
         print(f"cpt sessions: cannot write {out}; close it in Excel and run again", file=sys.stderr)
         return 1
@@ -631,6 +679,10 @@ def _cmd_sessions_list(args: argparse.Namespace) -> int:
         print("cost column left empty: no pricing table found (pass --prices).")
     _print_session_warnings(stats)
     print(f"wrote {out}: {written} rows, {kept} with your entries kept.")
+    if not args.no_infer:
+        print("The task column is pre-filled from the issue number, pull request or git branch of each")
+        print("session (task_source says which); change any that is wrong, sessions that did the same")
+        print("job share a task. A suggested task is only imported once you give it an outcome.")
     print("Next: open it in Excel, fill task (same name for sessions that did the same job), task_type,")
     print("outcome (pass or fail) and leaked (yes or no) for the sessions to measure, save, then run:")
     print(f"  python -m cost_per_task.cli sessions import {out}")
@@ -651,7 +703,9 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
         for record in read_jsonl(log):
             imported_tasks.setdefault(record.attempt_id, record.task_id)
     existing_labels = load_labels(labels_path)
-    result = import_sheet(rows, sessions, imported_tasks, existing_labels)
+    result = import_sheet(
+        rows, sessions, imported_tasks, existing_labels, include_unlabelled=args.include_unlabelled
+    )
 
     writer = JsonlWriter(log)
     for record in result.records:
@@ -668,6 +722,11 @@ def _cmd_sessions_import(args: argparse.Namespace) -> int:
         f"  skipped: no task {result.blank}, already in the log: {result.already_imported}, "
         f"labels unchanged {result.unchanged_labels}"
     )
+    if result.inferred_only:
+        print(
+            f"  left out: {result.inferred_only} sessions with a suggested task and no outcome "
+            "(fill outcome, or pass --include-unlabelled to measure their cost anyway)"
+        )
     if result.missing:
         print(
             f"  {len(result.missing)} sessions in the sheet have no transcript any more: "

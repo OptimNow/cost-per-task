@@ -8,6 +8,7 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 - `src/cost_per_task/providers/`: per-provider usage extraction (JSON and SSE): `anthropic.py`, `openai.py` (Chat Completions and Responses; subtracts cached and reasoning tokens out of the totals). Design allows Bedrock, Vertex, xAI.
 - `src/cost_per_task/schema.py`: StepRecord (OpenTelemetry GenAI aligned) + JSONL persistence.
 - `src/cost_per_task/pricing.py`: dated pricing tables, per-step cost; `reasoning_per_mtok: null` means output rate; `load_many` merges vendor tables (oldest `as_of` wins); a table holds its earlier snapshots under `history` and `rates_for(model, at)` returns the rates in force on the call's day (`effective_from`, else `as_of`; unchanged rates keep their earliest date; a call older than the first snapshot takes it and is counted by `describe_usage`); `pin_to` backs `--prices-as-of`; `rates_for` strips gateway vendor prefixes and dot/hyphen differences.
+- `src/cost_per_task/taskid.py`: default task ids from structure only (issue number in the branch, pull request number, branch, else project and day; never titles or content), with the signal kept as `task_source` on the StepRecord and counted in the checklist's `task identity` line. Used by `cpt sessions list` (pre-filled `task`, `--no-infer`), by `cpt sessions import` (a suggested task without an outcome is left out unless `--include-unlabelled`) and by `cpt run` without `--task-id`.
 - `src/cost_per_task/labels.py`: pass/fail/leak labels in a separate append-only `cpt-labels.jsonl` (latest wins), CSV import.
 - `src/cost_per_task/stats.py`: Wilson interval, percentile, task-cluster bootstrap, p_N, pass^k. Standard library only.
 - `src/cost_per_task/metrics.py`: records to Attempt (primary model = largest cost share) to GroupSummary per model and task type; CPT_solved, CPT_risk, K*. `explain_attempt` takes one attempt apart by token class (`pricing.price_breakdown`), model and step for `cpt explain`.
@@ -24,6 +25,7 @@ Vendor-neutral Python tool measuring the real cost per completed task of LLM age
 ## Hard rules
 
 - **Never log secrets or content.** The proxy must never write API keys, headers, prompts or completions to the log. Only token counts, model, provider, ids, latency, tool names and the requested effort level. Tests enforce this (`test_no_secrets_or_content_in_log`); keep them passing.
+- **Outcomes are never inferred.** A task id may be guessed and is marked as such; pass, fail and leak come from a person, or from `--label-from-exit` when the user's own command checks the result.
 - **Token counts come from the provider API response, never a local tokenizer.**
 - **No invented prices.** Pricing tables carry `as_of` dates and a source; an undated table is rejected at load. Do not add or update a price without a verifiable source.
 - **Zero runtime dependencies in the core.** Standard library only; pytest is the sole dev dependency. The only optional extra is `[mcp]` for `cpt mcp`. Any new dependency needs explicit justification and agreement.

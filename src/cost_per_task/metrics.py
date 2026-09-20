@@ -46,6 +46,7 @@ class Attempt:
     efforts: set[str] = field(default_factory=set)
     outcome: str | None = None  # pass | fail | None when unlabelled
     leaked: bool = False
+    task_source: str = "manual"  # or the signal the task id was inferred from
 
     @property
     def passed(self) -> bool:
@@ -117,6 +118,7 @@ def build_attempts(
                 efforts={s.effort for s in steps if s.effort},
                 outcome=outcome,
                 leaked=leaked,
+                task_source=next((s.task_source for s in steps if s.task_source), None) or "manual",
             )
         )
     attempts.sort(key=lambda a: (a.task_id, a.first_timestamp, a.attempt_id))
@@ -162,6 +164,9 @@ class GroupSummary:
     # Mean C_attempt over labelled attempts only: the E[C] that CPT_solved
     # divides by p. None when nothing is labelled.
     labelled_mean_cost: float | None = None
+    # Tasks per origin of their id: 'manual' (stated by a person) or the signal it was
+    # inferred from (issue, pr, branch, date).
+    task_sources: dict[str, int] = field(default_factory=dict)
 
 
 def _cpt_solved(attempts: list[Attempt]) -> float | None:
@@ -306,6 +311,7 @@ def _summarise_group(
         ),
         table_cost_for_reported=sum(a.cost for a in with_reported) if with_reported else None,
         labelled_mean_cost=labelled_mean_cost,
+        task_sources=dict(Counter({a.task_id: a.task_source for a in members}.values())),
     )
 
 

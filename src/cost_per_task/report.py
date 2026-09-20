@@ -161,6 +161,21 @@ def _group_section(s: GroupSummary, currency: str) -> list[str]:
     return lines
 
 
+def _task_identity(summaries: list[GroupSummary]) -> str:
+    """How many task ids a person stated and how many were inferred, by signal.
+    Groups by task type split tasks cleanly; a task seen under two models counts in both."""
+    sources: dict[str, int] = {}
+    for s in summaries:
+        for source, count in s.task_sources.items():
+            sources[source] = sources.get(source, 0) + count
+    stated = sources.pop("manual", 0)
+    inferred = sum(sources.values())
+    if not inferred:
+        return f"{stated} tasks, all stated by hand"
+    detail = ", ".join(f"{name} {count}" for name, count in sorted(sources.items()))
+    return f"{stated} tasks stated by hand, {inferred} inferred ({detail}); outcomes are never inferred"
+
+
 def _checklist(
     summaries: Iterable[GroupSummary],
     table: PricingTable,
@@ -183,6 +198,7 @@ def _checklist(
             "of their model and are priced with it"
         )
     lines.append(f"  harness: {harness or 'not stated (pass --harness)'}")
+    lines.append(f"  task identity: {_task_identity(summaries)}")
     cache_rates = "; ".join(
         f"{_group_name(s)} {100 * s.cache_hit_rate:.1f}%"
         for s in summaries

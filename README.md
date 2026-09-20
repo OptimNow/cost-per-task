@@ -242,11 +242,11 @@ labels, report and comparison are model-agnostic already.
 
 | Command | What it does |
 |---|---|
-| `cpt run --task-id T [--task-type X] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id |
+| `cpt run [--task-id T] [--task-type X] [--label-from-exit] -- <command>` | run an agent command through the proxy, tagging every call with the task and a fresh attempt id. Without `--task-id` the task comes from the git branch (issue number, else branch name). `--label-from-exit` labels the attempt from the command's exit code, for a command that ends with its own check |
 | `cpt serve --port 4000 --task-id T` | run the proxy on its own and point any process at it |
 | `cpt label pass\|fail [--task T] [--attempt A] [--leak]` | label the latest or a named attempt; `--import labels.csv` labels in bulk |
 | `cpt sessions summary [--since D] [--by month] [--subscription P]` | what your Claude Code and Cowork sessions would cost at list prices, by product, model and period; no labels needed |
-| `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet |
+| `cpt sessions list`, then `cpt sessions import` | measure Claude Code and Cowork sessions from their transcripts, labelled in a spreadsheet whose task column is pre-filled from the issue, pull request or branch of each session |
 | `cpt import langfuse\|litellm FILE` | convert a usage export into cpt records |
 | `cpt report [--cleanup-cost K] [--harness H] [--json]` | the report, per model and task type |
 | `cpt explain [--attempt A] [--task T]` | where one attempt's cost went: by token class, by model and the most expensive steps |

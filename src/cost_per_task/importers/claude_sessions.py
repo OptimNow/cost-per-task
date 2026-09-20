@@ -22,8 +22,10 @@ Rules learnt from real transcripts (Claude Code 2.1.x, September 2026):
 - model ``<synthetic>`` marks messages generated locally without an API call
 - a response seen in two sessions (history copied on resume) is counted once
 
-Only usage, model, effort, tool names, timestamps, the product and the name of
-the working folder are read. Prompts, answers and tool inputs are never copied.
+Only usage, model, effort, tool names, timestamps, the product, the name of
+the working folder, the git branch and the pull request number are read.
+Prompts, answers and tool inputs are never copied. The branch and the pull
+request number only serve to suggest a task id (``taskid.suggest_task``).
 The session title (desktop) or output file names (Cowork) are read only for the
 labelling sheet, never for the log, and can be left out.
 
@@ -47,6 +49,7 @@ from pathlib import Path
 from ..labels import Label
 from ..pricing import PricingTable, describe_usage, price_step, prices_line
 from ..schema import StepRecord
+from ..taskid import DEFAULT_BRANCHES, MANUAL, project_name, source_of, suggest_task
 
 PRODUCTS = {
     "claude-desktop": "Claude Code desktop",
@@ -62,8 +65,9 @@ _STANDARD_TIERS = (None, "standard")
 _STANDARD_GEO = (None, "", "not_available", "global")
 
 SHEET_COLUMNS = [
-    "session_id", "product", "started", "ended", "project", "title", "main_model",
-    "models", "calls", "api_cost_usd", "task", "task_type", "outcome", "leaked", "note",
+    "session_id", "product", "started", "ended", "project", "branch", "title", "main_model",
+    "models", "calls", "api_cost_usd", "task", "task_source", "task_type", "outcome", "leaked",
+    "note",
 ]
 USER_COLUMNS = ("task", "task_type", "outcome", "leaked", "note")
 _YES = {"yes", "y", "true", "1", "x", "oui", "o", "igen", "i"}
@@ -127,6 +131,8 @@ class Session:
     title: str = ""
     versions: set[str] = field(default_factory=set)
     calls: dict[tuple, Call] = field(default_factory=dict)
+    branches: Counter = field(default_factory=Counter)  # transcript lines per git branch
+    pr_number: int | None = None
 
     @property
     def product(self) -> str:
@@ -147,7 +153,23 @@ class Session:
         stamps = [c.timestamp for c in self.calls.values() if c.timestamp]
         return max(stamps) if stamps else ""
 
-    def records(self, task_id: str, task_type: str | None = None) -> list[StepRecord]:
+    @property
+    def branch(self) -> str:
+        """The branch most of the session ran on, default branches aside."""
+        named = [(n, b) for b, n in self.branches.items() if b not in DEFAULT_BRANCHES]
+        return max(named)[1] if named else ""
+
+    def suggested_task(self) -> tuple[str, str] | None:
+        return suggest_task(
+            branch=self.branch,
+            pr_number=self.pr_number,
+            project=self.project,
+            day=_local(self.started)[:10],
+        )
+
+    def records(
+        self, task_id: str, task_type: str | None = None, task_source: str | None = None
+    ) -> list[StepRecord]:
         out = []
         for step, call in enumerate(self.ordered_calls(), start=1):
             out.append(
@@ -169,6 +191,7 @@ class Session:
                     latency_ms=0,
                     effort=call.effort,
                     task_type=task_type,
+                    task_source=task_source,
                 )
             )
         return out
@@ -300,7 +323,11 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                 session.entrypoint = entry["entrypoint"]
             cwd = entry.get("cwd")
             if not session.project and isinstance(cwd, str) and cwd.strip("\\/"):
-                session.project = re.split(r"[\\/]", cwd.rstrip("\\/"))[-1]
+                session.project = project_name(cwd)
+            if isinstance(entry.get("gitBranch"), str):
+                session.branches[entry["gitBranch"].strip()] += 1
+            if isinstance(entry.get("prNumber"), int) and not isinstance(entry["prNumber"], bool):
+                session.pr_number = entry["prNumber"]
             if isinstance(entry.get("version"), str):
                 session.versions.add(entry["version"])
             if (
@@ -372,10 +399,13 @@ def write_sheet(
     *,
     table: PricingTable | None = None,
     existing: dict[str, dict] | None = None,
+    infer: bool = True,
 ) -> tuple[int, int]:
     """Write the labelling sheet, newest session first. Rows already in an
     existing sheet keep what the user typed, including rows for sessions whose
-    transcripts are gone. Returns (rows written, rows carrying user input)."""
+    transcripts are gone. With ``infer``, an empty task cell gets the suggested
+    task id and ``task_source`` says where it came from; the outcome is never
+    suggested. Returns (rows written, rows carrying user input)."""
     existing = existing or {}
     rows: list[dict] = []
     for session in sorted(sessions.values(), key=lambda s: s.started, reverse=True):
@@ -389,6 +419,7 @@ def write_sheet(
             "started": _local(session.started),
             "ended": _local(session.ended),
             "project": session.project,
+            "branch": session.branch,
             "title": session.title,
             "main_model": session.main_model(table),
             "models": " ".join(session.models()),
@@ -398,6 +429,10 @@ def write_sheet(
         previous = existing.get(session.session_id, {})
         for column in USER_COLUMNS:
             row[column] = previous.get(column, "")
+        suggestion = session.suggested_task()
+        if infer and not row["task"] and suggestion:
+            row["task"] = suggestion[0]
+        row["task_source"] = source_of(row["task"], suggestion) if row["task"] else ""
         rows.append(row)
     seen = {r["session_id"] for r in rows}
     rows.extend(
@@ -408,7 +443,12 @@ def write_sheet(
         writer = csv.DictWriter(handle, fieldnames=SHEET_COLUMNS, lineterminator="\r\n")
         writer.writeheader()
         writer.writerows(rows)
-    labelled = sum(1 for r in rows if any(r.get(c) for c in USER_COLUMNS))
+    labelled = sum(
+        1
+        for r in rows
+        if any(r.get(c) for c in USER_COLUMNS if c != "task")
+        or (r.get("task") and r.get("task_source") == MANUAL)
+    )
     return len(rows), labelled
 
 
@@ -443,6 +483,7 @@ class SheetImport:
     labels: list[Label] = field(default_factory=list)
     imported: list[Session] = field(default_factory=list)
     blank: int = 0
+    inferred_only: int = 0  # suggested task, no outcome: left out unless asked for
     already_imported: int = 0
     unchanged_labels: int = 0
     missing: list[str] = field(default_factory=list)
@@ -454,8 +495,13 @@ def import_sheet(
     sessions: dict[str, Session],
     imported_tasks: dict[str, str],
     existing_labels: dict[tuple[str, str], Label] | None = None,
+    include_unlabelled: bool = False,
 ) -> SheetImport:
     """Turn the rows that have a task into step records and labels.
+
+    A row whose task is still the suggested one and that has no outcome was
+    never looked at: it is left out unless ``include_unlabelled`` is set. A
+    task typed by hand imports with or without an outcome, as before.
 
     ``imported_tasks`` maps attempt ids already in the log to their task, so a
     second import adds nothing twice; labels may still change on a re-import.
@@ -484,6 +530,12 @@ def import_sheet(
             )
             leaked = False
 
+        session = sessions.get(sid)
+        source = source_of(task, session.suggested_task() if session else None)
+        if source != MANUAL and not outcome and not include_unlabelled and sid not in imported_tasks:
+            result.inferred_only += 1
+            continue
+
         if sid in imported_tasks:
             result.already_imported += 1
             task_for_label = imported_tasks[sid]
@@ -492,11 +544,10 @@ def import_sheet(
                     f"{sid}: already imported under task '{task_for_label}'; the new task name is ignored"
                 )
         else:
-            session = sessions.get(sid)
             if session is None:
                 result.missing.append(sid)
                 continue
-            result.records.extend(session.records(task, row.get("task_type") or None))
+            result.records.extend(session.records(task, row.get("task_type") or None, source))
             result.imported.append(session)
             imported_tasks[sid] = task
             task_for_label = task

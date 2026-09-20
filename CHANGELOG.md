@@ -7,6 +7,16 @@ versioning, with the minor digit bumped for any user-visible feature.
 ## [Unreleased]
 
 ### Added
+- Task ids inferred from the environment, so labelling is one column instead of two.
+  `cpt sessions list` pre-fills `task` from the issue number in the branch name, else the pull
+  request, else the branch, else project and day; the new `branch` and `task_source` columns
+  show the signal. `--no-infer` keeps the old empty column. Session titles are never used.
+- `cpt run` no longer needs `--task-id` inside a git repository: the task comes from the
+  branch. `--label-from-exit` labels the attempt pass or fail from the command's exit code,
+  for commands that end with their own check.
+- The log records `task_source` for inferred task ids, and the disclosure checklist gains a
+  `task identity` line: tasks stated by hand, tasks inferred, by signal. Outcomes are never
+  inferred.
 - Dated price snapshots. `cpt prices refresh --write` keeps the previous table under `history`
   in the same file instead of overwriting it, and every command prices each call with the
   snapshot in force on the day the call ran. A price change no longer moves the cost of past
@@ -22,6 +32,11 @@ versioning, with the minor digit bumped for any user-visible feature.
   as history, restored from the repository. No rate differs between them.
 
 ### Changed
+- `cpt sessions import` leaves out a session whose task is still the suggested one and that
+  has no outcome (it was never looked at); `--include-unlabelled` imports it anyway. A task
+  typed by hand imports with or without an outcome, as before.
+- The `project` column of a session run in a Claude Code worktree is the repository's name,
+  not the worktree folder's.
 - A model the hub no longer lists keeps its last known rates (they stay under `history`);
   it used to become unpriced after `--write`.
 - `as_of` and `effective_from` must be `YYYY-MM-DD` dates; anything else is rejected at load.
