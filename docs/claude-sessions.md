@@ -11,7 +11,7 @@ There is no proxy to run, no API key to set and nothing extra to pay.
 
 | | Read | Where it goes |
 |---|---|---|
-| Model, token counts (input, output, cache reads, cache writes), effort, tool names, timestamps | yes | the usage log |
+| Model, token counts (input, output, cache reads, cache writes), effort, speed (fast mode or standard), tool names, timestamps | yes | the usage log |
 | Product (desktop, terminal, Cowork) and Claude Code version | yes | the sheet and the disclosure checklist |
 | Name of the folder the session worked in | yes | the sheet |
 | Git branch and pull request number of the session | yes | the sheet, to suggest a task; the log, only as part of a task id you imported (pass `--no-infer` to leave them out) |
@@ -336,9 +336,13 @@ token, so this is a shadow cost: useful to compare models and kinds of task, to 
 what a subscription is worth to you, or to budget a move to the API. If you run Claude
 Code with an API key, it is your real cost before any negotiated discount.
 
-Not modelled, and reported when detected: fast mode, a priority service tier and data
-residency surcharges, all of which cost more than list price. Negotiated discounts are not
-modelled either. Long context is not a gap: Anthropic bills Claude 4.6 and later models at
+Fast mode is priced: each response says which speed served it, and a fast response takes
+the model's fast rates (Opus 5.5, Opus 5 and Opus 4.8 in the shipped table, at about twice
+the standard rates). A fast response on a model without fast rates is priced at the
+standard rates and the summary says so on its `speed` line. Not modelled, and reported when
+detected: a priority service tier and data residency surcharges, both of which cost more
+than list price. Negotiated discounts are not modelled either. Long context is not a gap:
+Anthropic bills Claude 4.6 and later models at
 the standard rate over the whole 1M-token window (pricing page, read on 2026-09-14), so a
 session whose prompts grow past 200K tokens is priced correctly.
 

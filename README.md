@@ -182,7 +182,7 @@ Per model and per task type, the paper's estimators and what each one tells you:
 | Break-even cleanup cost K* | (CPT_B - CPT_A) / (L_A - L_B) | For two models: below K* the cheaper, leakier one wins; above it the reliable one does |
 
 Every report ends with the paper's **disclosure checklist**: model versions, prices with
-dates and source, harness, cache hit rate, effort settings, sample size and k, the intervals
+dates and source, harness, cache hit rate, effort settings, fast mode calls, sample size and k, the intervals
 used, leak rate, the cleanup cost assumed, and K* for comparisons. The harness is the product
 and settings the agent ran under, such as Claude Code 2.1 in print mode. With these attached,
 a cost figure becomes a measurement someone else can check.
@@ -199,7 +199,8 @@ cpt compare claude-haiku-4-5 claude-sonnet-5 --cleanup-cost 25
 
 **Three ways in, one log.** Whatever the source, each model call (a step) becomes one line in
 a JSONL log. The line holds token counts by class, model, provider, task and attempt ids,
-tool names, latency and the effort level requested. Outcomes go to a separate labels file, so
+tool names, latency, the effort level requested and the speed the provider reports (fast mode
+or standard). Outcomes go to a separate labels file, so
 the usage log is never rewritten.
 
 - **Local proxy.** `cpt run` starts a small web server on your machine and points the agent
@@ -327,11 +328,22 @@ To re-price everything on purpose, for instance "what would last quarter cost at
 rates", pass `--prices-as-of latest` or `--prices-as-of 2026-09-01` to `report`, `compare`,
 `explain`, `sessions list` or `sessions summary`. The checklist says so when you do.
 
-**Known limitation.** One rate per token class. Batch discounts, fast mode, the priority tier
-and data residency surcharges are not modelled, nor is OpenAI's long-context tier above 272K
-input tokens on GPT-5.5 and GPT-5.4: attempts that cross it are understated, and the report
-states which prices it applied. Claude 4.6 and later models have no such tier: Anthropic bills
-the full 1M-token window at the standard rate (pricing page, read on 2026-09-14).
+**Fast mode.** Anthropic's fast mode (`speed: fast`, Claude API only) runs the same model at
+about twice the list price. Every call records the speed the response reports, and a fast
+call is priced from the model's `fast` rates when the table has them: Opus 5.5 (8 / 40 USD
+per MTok), Opus 5 and Opus 4.8 (10 / 50), with the cache multipliers applied on top of the
+fast input rate as the vendor states. The hub does not serve fast rates, so they are entered
+by hand from the vendor's page and `cpt prices refresh` carries them forward while the
+model's standard rates hold. A fast call on a model without fast rates is priced at the
+standard rates and counted on the checklist's `speed` line, never silently. Fast rates are
+part of the snapshot they were added to: a fast call older than it takes the standard rates,
+as every other rate change does, unless you pass `--prices-as-of latest`.
+
+**Known limitation.** One rate per token class. Batch discounts, the priority tier and data
+residency surcharges are not modelled, nor is OpenAI's long-context tier above 272K input
+tokens on GPT-5.5 and GPT-5.4: attempts that cross it are understated, and the report states
+which prices it applied. Claude 4.6 and later models have no such tier: Anthropic bills the
+full 1M-token window at the standard rate (pricing page, read on 2026-09-14).
 
 ---
 

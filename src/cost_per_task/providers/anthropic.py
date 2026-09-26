@@ -8,7 +8,9 @@ response that ran server-side tools (web search) reports its final input and
 cache counts there too, above the ``message_start`` values.
 
 Anthropic reports extended-thinking tokens inside ``output_tokens`` with no
-separate reasoning count, so ``reasoning_tokens`` stays None here.
+separate reasoning count, so ``reasoning_tokens`` stays None here. The usage
+block also names the ``speed`` the call was served at (``fast`` or
+``standard``); it is kept so that fast mode can be priced at its own rates.
 """
 
 from __future__ import annotations
@@ -29,7 +31,15 @@ def _usage_from_dict(usage: dict) -> ParsedUsage:
     detail = usage.get("cache_creation")
     if isinstance(detail, dict):
         parsed.cache_write_1h_tokens = int(detail.get("ephemeral_1h_input_tokens") or 0)
+    parsed.speed = _speed(usage) or parsed.speed
     return parsed
+
+
+def _speed(usage: dict) -> str | None:
+    """The ``speed`` the response reports (``fast`` or ``standard``), clipped so
+    that an odd value cannot bloat the log."""
+    value = usage.get("speed")
+    return value[:20] if isinstance(value, str) and value else None
 
 
 _CUMULATIVE_COUNTS = (
@@ -56,6 +66,7 @@ def _apply_cumulative(parsed: ParsedUsage, usage: dict) -> None:
         parsed.cache_write_1h_tokens = max(
             parsed.cache_write_1h_tokens, int(detail["ephemeral_1h_input_tokens"])
         )
+    parsed.speed = _speed(usage) or parsed.speed
 
 
 class AnthropicAdapter:

@@ -7,11 +7,25 @@ versioning, with the minor digit bumped for any user-visible feature.
 ## [Unreleased]
 
 ### Added
+- Fast mode is priced. Every call now records the speed the provider reports it was served
+  at (`speed` on the log line: Anthropic's `usage.speed`, `fast` or `standard`, read from the
+  response by the proxy and from the transcripts by the sessions importer). A pricing table
+  entry may carry a `fast` set of the same six rates; a fast call takes them, and
+  `prices/anthropic.json` carries them for Opus 5.5 (8 / 40 USD per MTok), Opus 5 and
+  Opus 4.8 (10 / 50), from Anthropic's fast mode table read on 2026-09-26, with the cache
+  multipliers applied on top of the fast input rate as that page states. A fast call on a
+  model without fast rates is priced at the standard rates and counted, never silently.
+- A `speed` line in the disclosure checklist, in `cpt explain` (which also marks fast steps)
+  and in `cpt sessions summary`, plus `fast_mode_calls` and
+  `fast_mode_calls_at_standard_rates` under `prices` in the JSON output.
+- `cpt prices refresh` keeps hand-entered fast rates through a refresh while the model's
+  standard rates are unchanged, since the hub serves none, and drops them with a note when
+  the standard rates moved.
 - Claude Opus 5.5 in `prices/anthropic.json` (input 4, cache read 0.20 at a documented
   special 0.05x, cache writes 5 and 8, output 20 USD per million tokens), plus Claude
   Sonnet 4, from `cpt prices refresh` on 2026-09-26 and checked against the
   platform.claude.com pricing page the same day. The earlier snapshots stay under
-  `history`; fast mode on Opus 5.5 (8 / 40) remains a documented limitation.
+  `history`.
 
 ### Fixed
 - A model id the table lacks was priced at the longest shorter id it started with:

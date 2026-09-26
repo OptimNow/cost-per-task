@@ -221,3 +221,31 @@ def test_refresh_write_then_report_prices_by_day(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert sum(g["total_cost"] for g in payload["groups"]) == pytest.approx(before["input_per_mtok"])
     assert payload["prices"]["pinned_to"] == "latest"
+
+
+def test_refresh_carries_hand_entered_fast_rates_forward():
+    from cost_per_task.prices_hub import carry_fast_rates
+
+    fast = {**_rates(4.0), "output_per_mtok": 20.0}
+    old = _snapshot("2026-09-01", test_model=2.0, other_model=1.0)
+    old["models"]["test-model"]["fast"] = fast
+    old["models"]["other-model"]["fast"] = fast
+    # The hub never serves fast rates: a fresh build has none.
+    new = _snapshot("2026-09-10", test_model=2.0, other_model=1.5)
+    notes = carry_fast_rates(old, new)
+    assert new["models"]["test-model"]["fast"] == fast  # standard rates unchanged: kept
+    assert "fast" not in new["models"]["other-model"]  # standard rates moved: dropped, not guessed
+    assert notes == [
+        "! other-model: fast mode rates dropped because its standard rates changed; "
+        "read them again from the vendor price list before writing",
+        "= test-model: fast mode rates kept from the previous table",
+    ]
+    assert carry_fast_rates(None, new) == []
+    # Kept rates count as unchanged, so no new snapshot is stacked for them alone.
+    same = _snapshot("2026-09-10", test_model=2.0)
+    previous = _snapshot("2026-09-01", test_model=2.0)
+    previous["models"]["test-model"]["fast"] = fast
+    carry_fast_rates(previous, same)
+    merged = with_history(previous, same)
+    assert merged["effective_from"] == "2026-09-01" and "history" not in merged
+    assert merged["models"]["test-model"]["fast"] == fast

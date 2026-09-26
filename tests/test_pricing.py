@@ -4,7 +4,15 @@ import json
 
 import pytest
 
-from cost_per_task.pricing import PricingError, PricingTable, cost_per_attempt, price_step
+from cost_per_task.pricing import (
+    PricingError,
+    PricingTable,
+    cost_per_attempt,
+    describe_usage,
+    price_breakdown,
+    price_step,
+    speed_line,
+)
 from cost_per_task.schema import StepRecord
 
 TABLE = {
@@ -179,3 +187,80 @@ def test_cost_per_attempt_groups_and_sums(tmp_path):
     totals = cost_per_attempt(records, table)
     assert totals[("T1", "a1")] == pytest.approx(4.5)
     assert totals[("T1", "a2")] == pytest.approx(6.0)
+
+
+FAST = {
+    "input_per_mtok": 6.0,
+    "cache_read_per_mtok": 0.6,
+    "cache_write_5m_per_mtok": 7.5,
+    "cache_write_1h_per_mtok": 12.0,
+    "output_per_mtok": 30.0,
+    "reasoning_per_mtok": None,
+}
+
+
+def test_fast_mode_calls_take_the_fast_rates_when_the_table_has_them(tmp_path):
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["test-model"]["fast"] = FAST
+    table = _table(tmp_path, data)
+    tokens = dict(input_tokens=1_000_000, cache_read_tokens=1_000_000, cache_write_tokens=200_000,
+                  cache_write_1h_tokens=100_000, output_tokens=100_000)
+    standard = price_step(_record(**tokens), table)
+    fast = price_step(_record(speed="fast", **tokens), table)
+    assert standard == pytest.approx(3.0 + 0.3 + 0.375 + 0.6 + 1.5)
+    assert fast == pytest.approx(2 * standard)  # every class doubled in this fixture
+    assert price_step(_record(speed="standard", **tokens), table) == standard
+    breakdown = price_breakdown(_record(speed="fast", **tokens), table)
+    assert sum(breakdown.values()) == pytest.approx(fast)
+    assert breakdown["output"] == pytest.approx(3.0)
+    assert table.rates_for("test-model").fast.output_per_mtok == 30.0
+
+
+def test_fast_mode_calls_without_fast_rates_take_standard_rates_and_are_counted(tmp_path):
+    table = _table(tmp_path)  # no fast block
+    records = [
+        _record(speed="fast", input_tokens=1_000_000),
+        _record(step_id=2, speed="fast", input_tokens=1_000_000),
+        _record(step_id=3, input_tokens=1_000_000),
+    ]
+    assert price_step(records[0], table) == pytest.approx(3.0)
+    usage = describe_usage(records, table)
+    assert usage.fast_calls == 0
+    assert usage.fast_at_standard == {"test-model": 2}
+    table.usage = usage
+    assert speed_line(table) == (
+        "2 fast mode calls priced at standard rates, no fast rates in the table for test-model (2)"
+    )
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["test-model"]["fast"] = FAST
+    priced = _table(tmp_path, data)
+    priced.usage = describe_usage(records, priced)
+    assert (priced.usage.fast_calls, priced.usage.fast_at_standard) == (2, {})
+    assert speed_line(priced) == "fast mode on 2 calls, priced at fast rates"
+    priced.usage = describe_usage(records[2:], priced)
+    assert speed_line(priced) == "no fast mode calls"
+
+
+def test_fast_rates_are_validated_like_the_standard_ones(tmp_path):
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["test-model"]["fast"] = {**FAST, "output_per_mtok": "40"}
+    with pytest.raises(PricingError, match="fast.'output_per_mtok'"):
+        _table(tmp_path, data)
+    data["models"]["test-model"]["fast"] = 2.0
+    with pytest.raises(PricingError, match="fast"):
+        _table(tmp_path, data)
+
+
+def test_shipped_table_prices_fast_mode_for_the_models_that_offer_it():
+    from cost_per_task.pricing import default_table_paths
+
+    table = PricingTable.load_many(default_table_paths())
+    fast = table.rates_for("claude-opus-5-5").fast
+    assert (fast.input_per_mtok, fast.cache_read_per_mtok, fast.output_per_mtok) == (8.0, 0.4, 40.0)
+    assert (fast.cache_write_5m_per_mtok, fast.cache_write_1h_per_mtok) == (10.0, 16.0)
+    for model in ("claude-opus-5", "claude-opus-4-8"):
+        fast = table.rates_for(model).fast
+        assert (fast.input_per_mtok, fast.cache_read_per_mtok, fast.output_per_mtok) == (10.0, 1.0, 50.0)
+    for model in ("claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5", "claude-opus-4-7"):
+        assert table.rates_for(model).fast is None
+    assert "fast mode" in table.source

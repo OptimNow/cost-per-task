@@ -77,3 +77,18 @@ def test_stream_delta_never_lowers_a_count():
     assert usage is not None
     assert usage.input_tokens == 1000
     assert usage.output_tokens == 1
+
+
+def test_speed_is_read_from_the_usage_block():
+    fast = json.loads(json.dumps(NON_STREAMING_RESPONSE))
+    fast["usage"]["speed"] = "fast"
+    assert AnthropicAdapter().parse_json_body(json.dumps(fast).encode()).speed == "fast"
+    assert AnthropicAdapter().parse_json_body(json.dumps(NON_STREAMING_RESPONSE).encode()).speed is None
+    # A stream names it in message_start (SSE_BODY) or in the final delta.
+    assert _collect(SSE_BODY).speed == "fast"
+    assert _collect(SSE_SERVER_TOOL_BODY).speed is None
+    delta_only = SSE_SERVER_TOOL_BODY.replace('"server_tool_use"', '"speed":"standard","server_tool_use"')
+    assert _collect(delta_only).speed == "standard"
+    odd = json.loads(json.dumps(NON_STREAMING_RESPONSE))
+    odd["usage"]["speed"] = "x" * 100
+    assert len(AnthropicAdapter().parse_json_body(json.dumps(odd).encode()).speed) == 20

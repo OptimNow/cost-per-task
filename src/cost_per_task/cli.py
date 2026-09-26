@@ -53,6 +53,7 @@ from .prices_hub import (
     HUB_URL,
     PROVIDERS,
     build_table,
+    carry_fast_rates,
     diff_tables,
     fetch_hub,
     load_hub,
@@ -683,7 +684,8 @@ def _cmd_prices(args: argparse.Namespace) -> int:
 
     for warning in warnings:
         print(f"cpt prices: warning: {warning}", file=sys.stderr)
-    changes = diff_tables(existing, table)
+    notes = carry_fast_rates(existing, table)
+    changes = diff_tables(existing, table) + notes
     print(f"hub catalogue {table['as_of']}: {len(table['models'])} {args.provider} models priced")
     if existing is None:
         print(f"{out} does not exist yet; all models are new")

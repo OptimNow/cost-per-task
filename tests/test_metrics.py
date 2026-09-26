@@ -9,7 +9,7 @@ import pytest
 
 from cost_per_task.labels import Label
 from cost_per_task.metrics import break_even_cleanup_cost, build_attempts, summarise
-from cost_per_task.pricing import PricingTable
+from cost_per_task.pricing import PricingTable, describe_usage
 from cost_per_task.report import render_comparison, render_report
 from cost_per_task.schema import StepRecord
 
@@ -159,6 +159,7 @@ def test_reports_render_and_carry_the_checklist(table):
     records, labels = _dataset()
     attempts = build_attempts(records, table, labels)
     summaries = summarise(attempts, cleanup_cost=10.0, resamples=50, seed=1)
+    table.usage = describe_usage(records, table)  # as every command does before rendering
     text = render_report(attempts, summaries, table, harness="test-harness 1.0")
     for expected in (
         "CPT_solved = E[C] / p: 2.8000 USD",
@@ -168,6 +169,7 @@ def test_reports_render_and_carry_the_checklist(table):
         "harness: test-harness 1.0",
         "model versions: model-a, model-b",
         "cache hit rate: model-a [coding] 0.0%; model-b [coding] 0.0%",
+        "speed: no fast mode calls",
     ):
         assert expected in text
     assert "labelled attempts" not in text  # everything is labelled: one mean, no scope note

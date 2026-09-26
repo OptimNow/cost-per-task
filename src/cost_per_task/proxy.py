@@ -17,8 +17,8 @@ upstream; the upstream URL may carry a path prefix (``https://openrouter.ai/api`
 Security invariants:
 - request and response bodies are never logged
 - headers, including API keys, are never logged
-- the log holds only token counts, model, provider, ids, latency, tool names
-  and the effort level the request asked for
+- the log holds only token counts, model, provider, ids, latency, tool names,
+  the effort level the request asked for and the speed the response reports
 """
 
 from __future__ import annotations
@@ -411,6 +411,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             task_type=self.server.task_type,
             task_source=self.server.task_source,
             reported_cost=usage.reported_cost,
+            speed=usage.speed,
         )
         self.server.writer.append(record)
         self.server.captured_count += 1

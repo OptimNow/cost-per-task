@@ -137,3 +137,27 @@ def test_cli_explain_picks_and_matches_attempts(tmp_path, table, capsys):
     assert cli.main([*base, "--attempt", "zz"]) == 1
     assert "matches 0 attempts" in capsys.readouterr().err
     assert cli.main(["explain", "--log", str(tmp_path / "missing.jsonl"), "--prices", prices]) == 1
+
+
+def test_fast_mode_steps_are_priced_at_fast_rates_and_marked(tmp_path):
+    fast_rates = {k: (v * 2 if isinstance(v, float) else v) for k, v in RATES.items()}
+    path = tmp_path / "fast-prices.json"
+    path.write_text(
+        json.dumps({"currency": "USD", "as_of": "2026-09-01",
+                    "models": {"model-a": {**RATES, "fast": fast_rates}, "model-b": RATES}}),
+        encoding="utf-8",
+    )
+    fast_table = PricingTable.load(path)
+    records = _records()
+    records[0].speed = "fast"  # model-a, has fast rates: doubled
+    records[1].speed = "fast"  # model-b, none: standard rates, counted
+    assert price_step(records[0], fast_table) == pytest.approx(2 * 13_125 / 1_000_000)
+    assert price_step(records[1], fast_table) == pytest.approx(4_050 / 1_000_000)
+    from cost_per_task.pricing import describe_usage
+
+    fast_table.usage = describe_usage(records, fast_table)
+    explanation = explain_attempt(records, fast_table, {})
+    text = render_explain(explanation, fast_table)
+    assert "fast mode on 2 steps" in text
+    assert "warning: fast mode on 1 calls, priced at fast rates; 1 fast mode calls priced at standard rates, no fast rates in the table for model-b (1)" in text
+    assert "model-a fast" in text and "model-b fast" in text

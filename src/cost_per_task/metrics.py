@@ -407,6 +407,7 @@ class StepCost:
     cost: float | None  # None when the model is unpriced
     tool_names: list[str]
     effort: str | None
+    speed: str | None = None  # fast when the provider served the step in fast mode
 
 
 @dataclass
@@ -465,6 +466,7 @@ def explain_attempt(
                 cost=cost,
                 tool_names=list(step.tool_names),
                 effort=step.effort,
+                speed=step.speed,
             )
         )
     classes = [

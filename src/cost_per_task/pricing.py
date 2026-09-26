@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
@@ -42,6 +42,10 @@ class ModelRates:
     cache_write_1h_per_mtok: float
     output_per_mtok: float
     reasoning_per_mtok: float | None = None
+    # The same six rates for calls the provider served in fast mode (Anthropic
+    # ``speed: fast``), when the model offers it; None means fast calls are priced
+    # at the standard rates above and counted as such.
+    fast: ModelRates | None = None
 
 
 _REQUIRED_RATES = (
@@ -71,26 +75,43 @@ def _check_date(value, what: str) -> str:
         raise PricingError(f"{what} must be a YYYY-MM-DD date, got {value!r}") from None
 
 
-def _parse_models(raw: dict) -> dict[str, ModelRates]:
-    models: dict[str, ModelRates] = {}
-    for model_id, rates in raw.items():
-        values = {}
-        for rate_key in _REQUIRED_RATES:
-            value = rates.get(rate_key)
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise PricingError(
-                    f"model '{model_id}': '{rate_key}' must be a number, got {value!r}"
-                )
-            values[rate_key] = float(value)
-        reasoning = rates.get("reasoning_per_mtok")
-        if reasoning is not None and not isinstance(reasoning, (int, float)):
+def _parse_rates(model_id: str, rates: dict, *, what: str = "") -> ModelRates:
+    if not isinstance(rates, dict):
+        raise PricingError(f"model '{model_id}': {what or 'rates'} must be an object")
+    values = {}
+    for rate_key in _REQUIRED_RATES:
+        value = rates.get(rate_key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise PricingError(
-                f"model '{model_id}': 'reasoning_per_mtok' must be a number or null"
+                f"model '{model_id}': {what}'{rate_key}' must be a number, got {value!r}"
             )
-        models[model_id] = ModelRates(
-            reasoning_per_mtok=None if reasoning is None else float(reasoning), **values
+        values[rate_key] = float(value)
+    reasoning = rates.get("reasoning_per_mtok")
+    if reasoning is not None and not isinstance(reasoning, (int, float)):
+        raise PricingError(
+            f"model '{model_id}': {what}'reasoning_per_mtok' must be a number or null"
         )
-    return models
+    fast = None
+    if not what and rates.get("fast") is not None:
+        fast = _parse_rates(model_id, rates["fast"], what="fast.")
+    return ModelRates(
+        reasoning_per_mtok=None if reasoning is None else float(reasoning), fast=fast, **values
+    )
+
+
+def _parse_models(raw: dict) -> dict[str, ModelRates]:
+    return {model_id: _parse_rates(model_id, rates) for model_id, rates in raw.items()}
+
+
+def rates_for_call(rates: ModelRates, record: StepRecord) -> tuple[ModelRates, bool]:
+    """The rates that price ``record`` given its model's rates: the ``fast`` set
+    when the call was served in fast mode and the table prices it, else the
+    standard set. The flag says a fast call had to take the standard rates."""
+    if record.speed != "fast":
+        return rates, False
+    if rates.fast is None:
+        return rates, True
+    return rates.fast, False
 
 
 def _compact(entries: list[DatedRates], model: str) -> list[DatedRates]:
@@ -242,18 +263,52 @@ class PriceUsage:
     snapshots: dict[str, int]  # snapshot as_of -> calls it priced
     predating: int  # calls older than their model's first snapshot
     pinned: str | None = None
+    fast_calls: int = 0  # calls served in fast mode and priced at the model's fast rates
+    # fast calls priced at standard rates because the snapshot in force has no fast
+    # rates for the model: model -> calls
+    fast_at_standard: dict[str, int] = field(default_factory=dict)
 
 
 def describe_usage(records: list[StepRecord], table: PricingTable) -> PriceUsage:
     snapshots: dict[str, int] = defaultdict(int)
-    predating = 0
+    predating = fast_calls = 0
+    fast_at_standard: dict[str, int] = defaultdict(int)
     for record in records:
         found = table.dated_rates_for(record.model, record.timestamp)
         if found is not None:
             snapshots[found[0].as_of] += 1
             predating += found[1]
+            if record.speed == "fast":
+                if found[0].rates.fast is None:
+                    fast_at_standard[record.model] += 1
+                else:
+                    fast_calls += 1
     pinned = "latest" if table.pinned == _LATEST else table.pinned
-    return PriceUsage(dict(sorted(snapshots.items())), predating, pinned)
+    return PriceUsage(
+        dict(sorted(snapshots.items())),
+        predating,
+        pinned,
+        fast_calls,
+        dict(sorted(fast_at_standard.items())),
+    )
+
+
+def speed_line(table: PricingTable) -> str:
+    """The speed entry of the disclosure: how many calls ran in fast mode and
+    at which rates they were priced."""
+    usage = table.usage
+    if usage is None:
+        return "not recorded"
+    parts = []
+    if usage.fast_calls:
+        parts.append(f"fast mode on {usage.fast_calls} calls, priced at fast rates")
+    if usage.fast_at_standard:
+        models = ", ".join(f"{m} ({n})" for m, n in usage.fast_at_standard.items())
+        parts.append(
+            f"{sum(usage.fast_at_standard.values())} fast mode calls priced at standard rates, "
+            f"no fast rates in the table for {models}"
+        )
+    return "; ".join(parts) or "no fast mode calls"
 
 
 def prices_line(table: PricingTable) -> str:
@@ -279,6 +334,7 @@ def price_breakdown(record: StepRecord, table: PricingTable) -> dict[str, float]
     rates = table.rates_for(record.model, record.timestamp)
     if rates is None:
         return None
+    rates, _ = rates_for_call(rates, record)
     write_1h = min(record.cache_write_1h_tokens, record.cache_write_tokens)
     write_5m = record.cache_write_tokens - write_1h
     reasoning_rate = (
@@ -300,6 +356,7 @@ def price_step(record: StepRecord, table: PricingTable) -> float | None:
     rates = table.rates_for(record.model, record.timestamp)
     if rates is None:
         return None
+    rates, _ = rates_for_call(rates, record)
     write_1h = min(record.cache_write_1h_tokens, record.cache_write_tokens)
     write_5m = record.cache_write_tokens - write_1h
     cost = (

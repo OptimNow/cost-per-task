@@ -37,6 +37,10 @@ class StepRecord:
     tool_names: list[str] = field(default_factory=list)
     latency_ms: int = 0
     effort: str | None = None
+    # The speed the provider reports it served the call at (Anthropic ``usage.speed``:
+    # ``fast`` or ``standard``); None when it says nothing. Fast mode is priced from the
+    # model's ``fast`` rates when the table has them.
+    speed: str | None = None
     task_type: str | None = None
     # How the task id came about: None or 'manual' when a person stated it, else the
     # signal it was inferred from (issue, pr, branch, session).

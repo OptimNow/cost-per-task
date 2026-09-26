@@ -24,6 +24,7 @@ class ParsedUsage:
     output_tokens: int = 0
     tool_names: list[str] = field(default_factory=list)
     reported_cost: float | None = None
+    speed: str | None = None  # Anthropic usage.speed: fast or standard
 
 
 class SseCollector(Protocol):
