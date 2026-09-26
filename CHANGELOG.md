@@ -6,6 +6,20 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Added
+- Claude Opus 5.5 in `prices/anthropic.json` (input 4, cache read 0.20 at a documented
+  special 0.05x, cache writes 5 and 8, output 20 USD per million tokens), plus Claude
+  Sonnet 4, from `cpt prices refresh` on 2026-09-26 and checked against the
+  platform.claude.com pricing page the same day. The earlier snapshots stay under
+  `history`; fast mode on Opus 5.5 (8 / 40) remains a documented limitation.
+
+### Fixed
+- A model id the table lacks was priced at the longest shorter id it started with:
+  `claude-opus-5-5` took the Opus 5 rates with no warning, 25% too high on input and
+  output and 2.5x on cache reads. The fallback now applies only to dated snapshots of a
+  table entry (`claude-sonnet-5-20250929`, `gpt-5.5-2026-04-01`); any other unknown id
+  is reported as unpriced, as it should have been.
+
 ## [0.7.0] - 2026-09-20
 
 Answers the feedback of the measurement framework's author (task labelling, dated prices,

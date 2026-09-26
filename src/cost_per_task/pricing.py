@@ -14,6 +14,7 @@ splits reasoning out of the output count so nothing is double counted.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import date
@@ -27,6 +28,10 @@ class PricingError(ValueError):
 
 
 _LATEST = "9999-12-31"  # pins a table to its newest rates
+
+# What may follow a table key for a model id to count as a dated snapshot of
+# it: -YYYYMMDD (Anthropic) or -YYYY-MM-DD (OpenAI), then anything but a digit.
+_DATED_SUFFIX = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})(?!\d)")
 
 
 @dataclass(frozen=True)
@@ -181,10 +186,14 @@ class PricingTable:
         )
 
     def _key_for(self, model: str) -> str | None:
-        """Exact match first, then the longest key the model id starts with,
-        so a dated id like claude-sonnet-5-20250929 finds claude-sonnet-5.
-        Gateway ids such as anthropic/claude-haiku-4.5 (OpenRouter) are tried
-        without the vendor prefix and with dots turned into hyphens."""
+        """Exact match first, then the longest key that the model id extends
+        with a date: claude-sonnet-5-20250929 finds claude-sonnet-5 and
+        gpt-5.5-2026-04-01 finds gpt-5.5. A longer version id never matches a
+        shorter model (claude-opus-5-5 is not claude-opus-5), so a model the
+        table lacks stays unpriced and is reported instead of billed at a
+        neighbour's rates. Gateway ids such as anthropic/claude-haiku-4.5
+        (OpenRouter) are tried without the vendor prefix and with dots turned
+        into hyphens."""
         candidates = [model]
         if "/" in model:
             suffix = model.rsplit("/", 1)[1]
@@ -194,7 +203,11 @@ class PricingTable:
                 return candidate
             best = None
             for key in self.models:
-                if candidate.startswith(key) and (best is None or len(key) > len(best)):
+                if not candidate.startswith(key):
+                    continue
+                if not _DATED_SUFFIX.match(candidate[len(key):]):
+                    continue
+                if best is None or len(key) > len(best):
                     best = key
             if best:
                 return best
