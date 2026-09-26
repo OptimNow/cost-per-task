@@ -99,7 +99,8 @@ reads the same figures from your log. The tools take the log and labels file nam
 sessions files work too.
 
 `cpt sessions` and the bundled price tables need version 0.5.0 or later; `cpt sessions label`,
-`cpt sessions page`, `cpt tasks` and dated price snapshots need 0.7.0. To work from a copy
+`cpt sessions page`, `cpt tasks` and dated price snapshots need 0.7.0; Opus 5.5 and fast mode
+prices need 0.8.0. To work from a copy
 of this repository instead, run `pip install -e .` in its folder. For a first run,
 the [testing guide](docs/testing-guide.md) compares two models step by step and explains
 every line of the report.
@@ -408,7 +409,7 @@ cost-per-task/
 
 ## Status
 
-Version 0.7.0 is on PyPI. What has been checked, and how:
+Version 0.8.0 is on PyPI. What has been checked, and how:
 
 | Part | How it was checked |
 |---|---|
@@ -417,6 +418,7 @@ Version 0.7.0 is on PyPI. What has been checked, and how:
 | Claude Code and Cowork importer | 527 real sessions on Windows, one of them cross-checked against an independent calculation |
 | Labelling in the terminal and in the browser page | the terminal labeller on real sessions; the page in a Chromium browser (filters, bulk edits, sorting, export, download), with a CSV recorded from it kept as a test fixture. The save dialog of Chrome and Edge was not exercised |
 | Security statements | `SECURITY.md`, each one with the command or the test that checks it, verified on 2026-09-20 |
+| Fast mode pricing | rates read from Anthropic's pricing page on 2026-09-26; tested on synthetic transcripts and the fake API server, not yet against an invoice |
 | OpenAI, OpenRouter, Langfuse and LiteLLM | built from the vendors' documentation and tested against fake servers and synthetic exports, not yet on live traffic |
 
 Roadmap: live validation of OpenAI and OpenRouter, importers checked on real exports, Amazon

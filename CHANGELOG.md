@@ -6,6 +6,11 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-26
+
+Prices Claude Opus 5.5 and Anthropic's fast mode, and stops an unlisted model from taking
+an older model's rates without a word.
+
 ### Added
 - Fast mode is priced. Every call now records the speed the provider reports it was served
   at (`speed` on the log line: Anthropic's `usage.speed`, `fast` or `standard`, read from the
@@ -279,7 +284,9 @@ Published to PyPI and as a GitHub Release on 2026-09-12, from commit 85d465e (ta
   the Anthropic price list.
 - `cpt run`, `cpt serve`, `cpt report`.
 
-[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/OptimNow/cost-per-task/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.8.0
+[0.7.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.7.0
 [0.6.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.6.0
 [0.5.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.5.0
 [0.4.0]: https://github.com/OptimNow/cost-per-task/releases/tag/v0.4.0
