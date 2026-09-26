@@ -61,6 +61,49 @@ def test_prefix_match_for_dated_model_ids(tmp_path):
     assert price_step(record, table) == pytest.approx(3.0)
 
 
+def test_longer_version_id_never_matches_a_shorter_model(tmp_path):
+    # Opus 5.5 must not be billed at Opus 5 rates when the table lacks it:
+    # a silent 25% over-price on input and output, 2.5x on cache reads.
+    data = json.loads(json.dumps(TABLE))
+    data["models"] = {"claude-opus-5": TABLE["models"]["test-model"]}
+    table = _table(tmp_path, data)
+    assert table.rates_for("claude-opus-5") is not None
+    assert table.rates_for("claude-opus-5-20260101") is not None
+    assert table.rates_for("claude-opus-5-5") is None
+    assert table.rates_for("claude-opus-5-5-20260925") is None
+    assert table.rates_for("claude-opus-56") is None
+    assert price_step(_record(model="claude-opus-5-5"), table) is None
+
+
+def test_dated_suffix_forms_and_longest_key(tmp_path):
+    data = json.loads(json.dumps(TABLE))
+    rates = TABLE["models"]["test-model"]
+    data["models"] = {"gpt-5.4": rates, "gpt-5.4-mini": {**rates, "output_per_mtok": 1.0}}
+    table = _table(tmp_path, data)
+    assert table.rates_for("gpt-5.4-2026-03-01").output_per_mtok == 15.0
+    assert table.rates_for("gpt-5.4-mini-2026-03-01").output_per_mtok == 1.0
+    assert table.rates_for("gpt-5.4-mini-2026-03-01-preview").output_per_mtok == 1.0
+    assert table.rates_for("gpt-5.4-nano") is None
+    assert table.rates_for("gpt-5.4-2026") is None
+
+
+def test_shipped_table_prices_opus_5_5_at_its_own_rates():
+    from cost_per_task.pricing import default_table_paths
+
+    table = PricingTable.load_many(default_table_paths())
+    rates = table.rates_for("claude-opus-5-5")
+    assert rates is not None
+    assert (
+        rates.input_per_mtok,
+        rates.cache_read_per_mtok,
+        rates.cache_write_5m_per_mtok,
+        rates.cache_write_1h_per_mtok,
+        rates.output_per_mtok,
+    ) == (4.0, 0.2, 5.0, 8.0, 20.0)
+    assert rates != table.rates_for("claude-opus-5")
+    assert table.rates_for("claude-fable-5-2") is None
+
+
 def test_gateway_model_ids_match_without_vendor_prefix(tmp_path):
     data = json.loads(json.dumps(TABLE))
     data["models"]["claude-haiku-4-5"] = data["models"].pop("test-model")
