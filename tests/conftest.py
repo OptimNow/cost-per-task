@@ -34,7 +34,7 @@ SSE_BODY = (
     'data: {"type":"message_start","message":{"id":"msg_02",'
     '"model":"claude-sonnet-5-20250929","usage":{"input_tokens":800,'
     '"cache_creation_input_tokens":0,"cache_read_input_tokens":2000,'
-    '"output_tokens":1}}}\n\n'
+    '"output_tokens":1,"speed":"fast"}}}\n\n'
     "event: content_block_start\n"
     'data: {"type":"content_block_start","index":0,'
     '"content_block":{"type":"tool_use","id":"tu_2","name":"bash","input":{}}}\n\n'

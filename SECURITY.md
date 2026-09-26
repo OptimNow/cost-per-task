@@ -14,7 +14,7 @@ protect against, and how each statement can be checked. Facts were verified on 2
 
 | Data | Read | Kept |
 |---|---|---|
-| Token counts, model, provider, latency, tool names, requested effort level, timestamps | yes | the usage log (`cpt-log.jsonl`) |
+| Token counts, model, provider, latency, tool names, requested effort level, reported speed (fast mode or standard), timestamps | yes | the usage log (`cpt-log.jsonl`) |
 | Task and attempt ids, task type, how the task id came about (`task_source`) | yes | the usage log |
 | Pass, fail, leak and the note you type | yes | the labels file (`cpt-labels.jsonl`) |
 | API keys and every other request header | in memory while a request is forwarded | never written |

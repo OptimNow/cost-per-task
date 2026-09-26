@@ -82,6 +82,7 @@ def test_non_streaming_passthrough_and_log(fake_upstream, tmp_path):
         assert record.tool_names == ["read_file"]
         assert record.tool_call_count == 1
         assert record.outcome_label == "pending"
+        assert record.speed is None  # the response did not say
     finally:
         server.shutdown()
         server.server_close()
@@ -105,6 +106,7 @@ def test_streaming_passthrough_and_log(fake_upstream, tmp_path):
         assert record.cache_read_tokens == 2000
         assert record.output_tokens == 180
         assert record.tool_names == ["bash"]
+        assert record.speed == "fast"  # from usage.speed in message_start
     finally:
         server.shutdown()
         server.server_close()

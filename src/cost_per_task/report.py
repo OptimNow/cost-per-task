@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from .metrics import Attempt, Explanation, GroupSummary, break_even_cleanup_cost, summarise_tasks
-from .pricing import PricingTable, prices_line
+from .pricing import PricingTable, prices_line, speed_line
 
 
 def summary_to_dict(summary: GroupSummary) -> dict:
@@ -31,6 +31,8 @@ def table_to_dict(table: PricingTable) -> dict:
         data["snapshots_used"] = table.usage.snapshots
         data["calls_predating_snapshots"] = table.usage.predating
         data["pinned_to"] = table.usage.pinned
+        data["fast_mode_calls"] = table.usage.fast_calls
+        data["fast_mode_calls_at_standard_rates"] = table.usage.fast_at_standard
     return data
 
 
@@ -251,6 +253,7 @@ def _checklist(
     )
     lines.append(f"  cache hit rate: {cache_rates or 'n/a'}")
     lines.append(f"  effort settings: {', '.join(efforts) or 'not recorded'}")
+    lines.append(f"  speed: {speed_line(table)}")
     lines.append(
         "  sample size: "
         + "; ".join(
@@ -379,6 +382,7 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
     a = explanation.attempt
     currency = table.currency
     others = sorted(a.models - {a.model})
+    fast_steps = sum(1 for s in explanation.steps if s.speed == "fast")
     outcome = (a.outcome or "unlabelled") + ("+leak" if a.leaked else "")
     lines = [
         f"attempt {a.attempt_id}",
@@ -388,7 +392,8 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
         f"  model {a.model}"
         + (f" (also {', '.join(others)})" if others else "")
         + f"; steps {a.steps}; tool calls {a.tool_calls}"
-        + f"; effort {', '.join(sorted(a.efforts)) or 'not recorded'}",
+        + f"; effort {', '.join(sorted(a.efforts)) or 'not recorded'}"
+        + (f"; fast mode on {fast_steps} steps" if fast_steps else ""),
         f"  cost C: {_money(a.cost, currency)} at prices {prices_line(table)}",
     ]
     if table.usage is not None and table.usage.predating:
@@ -398,6 +403,8 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
         )
     if a.unpriced_steps:
         lines.append(f"  warning: {a.unpriced_steps} steps had no price and count as zero cost")
+    if table.usage is not None and table.usage.fast_at_standard:
+        lines.append(f"  warning: {speed_line(table)}")
     if a.cache_hit_rate is not None:
         lines.append(
             f"  cache hit rate: {100 * a.cache_hit_rate:.1f}% of prompt tokens were read from cache"
@@ -436,8 +443,9 @@ def render_explain(explanation: Explanation, table: PricingTable, *, top_steps: 
         for s in ranked:
             tools = ", ".join(s.tool_names[:3]) + (" ..." if len(s.tool_names) > 3 else "")
             cost = f"{s.cost:.4f}" if s.cost is not None else "unpriced"
+            model = f"{s.model[:19]} fast" if s.speed == "fast" else s.model[:24]
             lines.append(
-                f"  {s.step_id:>5} {_local_time(s.timestamp):<19} {s.model[:24]:<24} "
+                f"  {s.step_id:>5} {_local_time(s.timestamp):<19} {model:<24} "
                 f"{s.prompt_tokens:>10,} {s.output_tokens:>8,} {cost:>10}  {tools}"
             )
     if explanation.largest_prompt is not None:

@@ -181,6 +181,30 @@ def diff_tables(old: dict | None, new: dict) -> list[str]:
     return lines
 
 
+def carry_fast_rates(old: dict | None, new: dict) -> list[str]:
+    """The hub serves no fast-mode rates, so a model's ``fast`` block is entered
+    by hand from the vendor's price list. Carry each one into the new table while
+    the model's standard rates are unchanged. When they moved, drop it and say so:
+    fast rates are stated next to the standard ones and must be read again."""
+    notes: list[str] = []
+    if not old:
+        return notes
+    for model, previous in sorted((old.get("models") or {}).items()):
+        fast = previous.get("fast")
+        current = (new.get("models") or {}).get(model)
+        if fast is None or current is None or current.get("fast") is not None:
+            continue
+        if all(previous.get(key) == current.get(key) for key in _RATE_KEYS):
+            current["fast"] = fast
+            notes.append(f"= {model}: fast mode rates kept from the previous table")
+        else:
+            notes.append(
+                f"! {model}: fast mode rates dropped because its standard rates changed; "
+                "read them again from the vendor price list before writing"
+            )
+    return notes
+
+
 def with_history(old: dict | None, new: dict) -> dict:
     """The table to write: the new snapshot on top, every earlier one kept
     under ``history`` so that past calls keep the rates of their day. When

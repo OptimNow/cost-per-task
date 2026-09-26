@@ -142,6 +142,9 @@ def test_discovery_dedupes_folds_subagents_and_groups_cowork(roots, table):
     assert cowork.title == "outputs: report.docx"
     assert cowork.cost(table) == (100.0, 0)  # audit.jsonl ignored
     assert stats["fast mode responses"] == 1
+    fast_call = next(c for c in s1.calls.values() if c.model == "claude-fable-5-1")
+    assert fast_call.speed == "fast" and m1.speed == "standard"
+    assert [r.speed for r in s1.records("-") if r.model == "claude-fable-5-1"] == ["fast"]
     assert stats["unreadable lines"] == 1
     assert stats["local messages skipped"] == 1
     assert stats["responses already counted in another session"] == 1
@@ -422,3 +425,22 @@ def test_import_uses_the_shared_default_files_and_the_old_ones_if_present(
     assert "--log sessions-log.jsonl --labels sessions-labels.jsonl" in captured.out
     assert len(read_jsonl(old / "sessions-log.jsonl")) == 3
     assert not (old / "cpt-log.jsonl").exists()
+
+
+def test_fast_mode_responses_are_priced_at_fast_rates_when_the_table_has_them(roots, tmp_path, capsys):
+    sessions, _ = discover_sessions(roots)
+    s1 = sessions["S1"]
+    standard = PricingTable.load(_prices(tmp_path / "standard.json"))
+    assert s1.cost(standard) == (200.0, 0)  # 120 + 50 + 30 output tokens at 1 USD each
+    summary = summarise_sessions(sessions, standard)
+    text = render_sessions_summary(summary, standard)
+    assert "speed: 1 fast mode calls priced at standard rates, no fast rates in the table for claude-fable-5-1 (1)" in text
+
+    data = json.loads(_prices(tmp_path / "fast.json").read_text(encoding="utf-8"))
+    data["models"]["claude-fable-5-1"]["fast"] = {**RATES, "output_per_mtok": 2_000_000.0}
+    path = tmp_path / "fast.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    fast = PricingTable.load(path)
+    assert s1.cost(fast) == (250.0, 0)  # the 50 fast output tokens now cost 2 USD each
+    text = render_sessions_summary(summarise_sessions(sessions, fast), fast)
+    assert "speed: fast mode on 1 calls, priced at fast rates" in text

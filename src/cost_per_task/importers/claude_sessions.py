@@ -47,7 +47,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..labels import Label, normalise_outcome
-from ..pricing import PricingTable, describe_usage, price_step, prices_line
+from ..pricing import PricingTable, describe_usage, price_step, prices_line, speed_line
 from ..schema import StepRecord
 from ..taskid import DEFAULT_BRANCHES, MANUAL, project_name, source_of, suggest_task
 
@@ -79,7 +79,7 @@ _NO = {"", "no", "n", "false", "0", "non", "nem"}
 
 WARNING_TEXT = {
     "unreadable lines": "transcript lines could not be read and were skipped",
-    "fast mode responses": "responses used fast mode, which costs more than list price; priced at standard rates",
+    "fast mode responses": "responses used fast mode; priced at the model's fast rates when the table has them, else at standard rates (the summary says which)",
     "non-standard service tier responses": "responses used a non-standard service tier; priced at standard rates",
     "regional inference responses": "responses ran with regional inference pricing; priced at standard rates",
 }
@@ -123,6 +123,7 @@ class Call:
     cache_write_1h_tokens: int = 0
     output_tokens: int = 0
     effort: str | None = None
+    speed: str | None = None  # usage.speed: fast or standard
     tool_names: list[str] = field(default_factory=list)
 
 
@@ -207,6 +208,7 @@ class Session:
                     effort=call.effort,
                     task_type=task_type,
                     task_source=task_source,
+                    speed=call.speed,
                 )
             )
         return out
@@ -367,6 +369,8 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                 if isinstance(block, dict) and block.get("type") in _TOOL_BLOCKS
             ]
             effort = entry.get("effort") if isinstance(entry.get("effort"), str) else None
+            speed = usage.get("speed")
+            speed = speed[:20] if isinstance(speed, str) and speed else None
 
             if key in owner:
                 call = sessions[owner[key]].calls[key]
@@ -381,6 +385,7 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                     call.cache_write_tokens, _int(usage.get("cache_creation_input_tokens"))
                 )
                 call.effort = call.effort or effort
+                call.speed = call.speed or speed
                 call.timestamp = call.timestamp or _iso(entry.get("timestamp"))
             else:
                 creation = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
@@ -393,11 +398,12 @@ def _read_transcript(path, source, group, hint, sessions, owner, stats, include_
                     cache_write_1h_tokens=_int(creation.get("ephemeral_1h_input_tokens")),
                     output_tokens=_int(usage.get("output_tokens")),
                     effort=effort,
+                    speed=speed,
                 )
                 session.calls[key] = call
                 owner[key] = sid
                 stats["responses"] += 1
-                if usage.get("speed") == "fast":
+                if speed == "fast":
                     stats["fast mode responses"] += 1
                 if usage.get("service_tier") not in _STANDARD_TIERS:
                     stats["non-standard service tier responses"] += 1
@@ -813,6 +819,8 @@ def render_sessions_summary(
             f"  {table.usage.predating:,} calls are older than the first price snapshot of their "
             "model and are priced with it"
         )
+    if table.usage is not None and (table.usage.fast_calls or table.usage.fast_at_standard):
+        lines.append(f"  speed: {speed_line(table)}")
     t = summary.tokens
     prompt = t["input"] + t["cache_read"] + t["cache_write"]
     hit = f" ({100 * t['cache_read'] / prompt:.1f}% of prompt tokens)" if prompt else ""
