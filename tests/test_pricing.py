@@ -61,6 +61,37 @@ def test_prefix_match_for_dated_model_ids(tmp_path):
     assert price_step(record, table) == pytest.approx(3.0)
 
 
+def test_version_ids_never_fall_back_to_a_shorter_model(tmp_path):
+    # claude-opus-5-5 is a different model from claude-opus-5 with different
+    # rates; until the table names it, it must count as unpriced rather than
+    # silently take the older model's rates.
+    data = json.loads(json.dumps(TABLE))
+    data["models"]["claude-opus-5"] = data["models"].pop("test-model")
+    data["models"]["gpt-5.4"] = dict(TABLE["models"]["test-model"])
+    table = _table(tmp_path, data)
+    assert table.rates_for("claude-opus-5-5") is None
+    assert table.rates_for("anthropic/claude-opus-5.5") is None
+    assert table.rates_for("claude-opus-5-5-20260925") is None
+    assert table.rates_for("gpt-5.4-mini") is None
+    assert table.rates_for("gpt-5.4-mini-2026-02-01") is None
+    # Dated ids of the same model still resolve, whichever way the vendor writes the date.
+    assert table.rates_for("claude-opus-5-20260101") is not None
+    assert table.rates_for("claude-opus-5-20260101-v1") is not None
+    assert table.rates_for("gpt-5.4-2026-02-01") is not None
+    assert table.rates_for("openai/gpt-5.4-2026-02-01") is not None
+
+
+def test_shipped_table_prices_opus_5_5_at_its_own_rates():
+    from cost_per_task.pricing import default_table_paths
+
+    table = PricingTable.load_many(default_table_paths())
+    rates = table.rates_for("claude-opus-5-5")
+    assert rates is not None
+    assert (rates.input_per_mtok, rates.cache_read_per_mtok, rates.output_per_mtok) == (4.0, 0.2, 20.0)
+    assert (rates.cache_write_5m_per_mtok, rates.cache_write_1h_per_mtok) == (5.0, 8.0)
+    assert table.rates_for("claude-opus-5").input_per_mtok == 5.0
+
+
 def test_gateway_model_ids_match_without_vendor_prefix(tmp_path):
     data = json.loads(json.dumps(TABLE))
     data["models"]["claude-haiku-4-5"] = data["models"].pop("test-model")

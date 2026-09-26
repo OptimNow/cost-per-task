@@ -6,6 +6,20 @@ versioning, with the minor digit bumped for any user-visible feature.
 
 ## [Unreleased]
 
+### Added
+- Claude Opus 5.5 in `prices/anthropic.json` (input 4, cache write 5 and 8, cache read 0.20,
+  output 20 USD per MTok), from the Pricing Hub and checked against Anthropic's pricing page
+  on 2026-09-26. Its cache-read rate is a documented special 0.05x of input, as Fable 5.1's is
+  0.025x. Claude Sonnet 4 (retired) came with the same refresh. The 2026-09-13 table is kept
+  under `history`, so calls before 2026-09-26 keep their prices.
+
+### Fixed
+- A model id that extends a table key with a version, such as `claude-opus-5-5` over
+  `claude-opus-5`, no longer takes the shorter model's rates. Until the table names the
+  model, its calls are unpriced and counted as such in the checklist, the report and
+  `cpt sessions summary`, instead of being priced 25% too high with no warning. Dated ids
+  (`claude-sonnet-5-20250929`, `gpt-5.5-2026-04-01`) still find their model.
+
 ## [0.7.0] - 2026-09-20
 
 Answers the feedback of the measurement framework's author (task labelling, dated prices,
