@@ -2,6 +2,10 @@
 
 Vendor-neutral Python tool measuring the real cost per completed task of LLM agents. Implements the DoiT "Cost Per Task, Not Cost Per Token" measurement framework (13 August 2026): token usage per API call comes from a local reverse proxy, from Claude Code and Cowork transcripts or from Langfuse and LiteLLM exports; calls are grouped into steps, attempts and tasks, priced from a dated table, and reported as cost per attempt, cost per solved task (CPT_solved = E[C_attempt] / p) and risk-adjusted cost (CPT_risk = CPT_solved + L x K).
 
+## Commits and pull requests
+
+Do not add `Co-Authored-By`, `Claude-Session` or "Generated with Claude Code" lines to commit messages or pull request descriptions.
+
 ## Architecture
 
 - `src/cost_per_task/proxy.py`: local reverse proxy serving Anthropic and OpenAI on one port (routed by path, then auth-header style); the agent is pointed at it via ANTHROPIC_BASE_URL / OPENAI_BASE_URL. Upstreams may carry a path prefix (OpenRouter: `https://openrouter.ai/api`); any OpenAI-compatible gateway works as the `openai` upstream and the log's `provider` becomes the gateway host. Forwards requests unchanged except for injecting `stream_options.include_usage` (streaming OpenAI chat) and `usage.include` (OpenRouter); logs only usage metadata plus `reported_cost` when the gateway states what it charged. It also records the effort level each request asked for (Anthropic `output_config.effort`, OpenAI `reasoning_effort` or `reasoning.effort`) and nothing else from the body; the speed comes from the response's `usage.speed`.
